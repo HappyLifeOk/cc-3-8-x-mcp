@@ -1,0 +1,378 @@
+'use strict';
+
+/**
+ * MCP Tools 注册表
+ * 每个 tool 透传到对应的 Editor.Message.request 或本地 helper。
+ * ctx 提供：editor message 封装、本地辅助函数。
+ */
+
+function defineTools(ctx) {
+    var msg = ctx.msg;   // async (target, name, ...args) => result
+    var local = ctx.local; // { getPreviewUrl, doReimport, doRefreshPreview, doOpenPreview, doScreenshot, doRefreshAssets, doReloadScene, evalInPreview, listWorktrees, openDevDir, cleanDevDir, getStatus, getPanelConfig }
+
+    return [
+        // ── scene 域 ──
+        {
+            name: 'scene_query_node_tree',
+            description: '查询当前场景节点树。传 uuid 查子树，不传查根。',
+            inputSchema: {
+                type: 'object',
+                properties: { uuid: { type: 'string', description: '可选：节点 uuid' } },
+            },
+            handler: async function (args) {
+                return await msg('scene', 'query-node-tree', args.uuid);
+            },
+        },
+        {
+            name: 'scene_query_node',
+            description: '查询单个节点完整 dump（含所有组件属性）',
+            inputSchema: {
+                type: 'object',
+                properties: { uuid: { type: 'string' } },
+                required: ['uuid'],
+            },
+            handler: async function (args) {
+                return await msg('scene', 'query-node', args.uuid);
+            },
+        },
+        {
+            name: 'scene_set_property',
+            description: '设置节点/组件属性。path 是 dump path（如 "position" 或 "__comps__.0.string"），dump 是 {type,value}。\n⚠️ 注意：若目的是修改 prefab 资源文件的属性，建议改用 prefab_edit（offline，不需要编辑器运行，直接读写 .prefab 文件，支持嵌套 prefab override）；scene_set_property 仅适用于修改运行时场景节点或需要编辑器上下文的场景。',
+            inputSchema: {
+                type: 'object',
+                properties: {
+                    uuid: { type: 'string' },
+                    path: { type: 'string' },
+                    dump: { type: 'object' },
+                },
+                required: ['uuid', 'path', 'dump'],
+            },
+            handler: async function (args) {
+                return await msg('scene', 'set-property', {
+                    uuid: args.uuid,
+                    path: args.path,
+                    dump: args.dump,
+                });
+            },
+        },
+        {
+            name: 'scene_open_scene',
+            description: '打开场景',
+            inputSchema: {
+                type: 'object',
+                properties: { uuid: { type: 'string', description: '场景资源 uuid' } },
+                required: ['uuid'],
+            },
+            handler: async function (args) {
+                return await msg('scene', 'open-scene', args.uuid);
+            },
+        },
+        {
+            name: 'scene_save_scene',
+            description: '保存当前场景',
+            inputSchema: { type: 'object', properties: {} },
+            handler: async function () {
+                return await msg('scene', 'save-scene');
+            },
+        },
+        {
+            name: 'scene_soft_reload',
+            description: '软重载场景（不清编辑器状态）',
+            inputSchema: { type: 'object', properties: {} },
+            handler: async function () {
+                return await msg('scene', 'soft-reload');
+            },
+        },
+        {
+            name: 'scene_execute_component_method',
+            description: '调用指定节点组件上的方法',
+            inputSchema: {
+                type: 'object',
+                properties: {
+                    uuid: { type: 'string' },
+                    name: { type: 'string', description: '方法名' },
+                    args: { type: 'array', items: {} },
+                },
+                required: ['uuid', 'name'],
+            },
+            handler: async function (args) {
+                return await msg('scene', 'execute-component-method', {
+                    uuid: args.uuid,
+                    name: args.name,
+                    args: args.args || [],
+                });
+            },
+        },
+
+        // ── asset-db 域 ──
+        {
+            name: 'asset_query_assets',
+            description: '按 pattern 列出资源（glob，如 db://assets/**/*.prefab）',
+            inputSchema: {
+                type: 'object',
+                properties: {
+                    pattern: { type: 'string' },
+                    ccType: { type: 'string', description: '可选：cc 类型过滤，如 cc.Prefab' },
+                },
+            },
+            handler: async function (args) {
+                return await msg('asset-db', 'query-assets', {
+                    pattern: args.pattern,
+                    ccType: args.ccType,
+                });
+            },
+        },
+        {
+            name: 'asset_query_info',
+            description: '按 url 或 uuid 查询资源元数据',
+            inputSchema: {
+                type: 'object',
+                properties: {
+                    urlOrUUID: { type: 'string' },
+                },
+                required: ['urlOrUUID'],
+            },
+            handler: async function (args) {
+                return await msg('asset-db', 'query-asset-info', args.urlOrUUID);
+            },
+        },
+        {
+            name: 'asset_query_url',
+            description: '由 uuid 反查 url',
+            inputSchema: {
+                type: 'object',
+                properties: { uuid: { type: 'string' } },
+                required: ['uuid'],
+            },
+            handler: async function (args) {
+                return await msg('asset-db', 'query-url', args.uuid);
+            },
+        },
+        {
+            name: 'asset_query_uuid',
+            description: '由 url 反查 uuid',
+            inputSchema: {
+                type: 'object',
+                properties: { url: { type: 'string' } },
+                required: ['url'],
+            },
+            handler: async function (args) {
+                return await msg('asset-db', 'query-uuid', args.url);
+            },
+        },
+        {
+            name: 'asset_refresh',
+            description: '刷新资源（可指定子目录）',
+            inputSchema: {
+                type: 'object',
+                properties: { url: { type: 'string', description: '默认 db://assets/' } },
+            },
+            handler: async function (args) {
+                return await msg('asset-db', 'refresh-asset', args.url || 'db://assets/');
+            },
+        },
+        {
+            name: 'asset_reimport',
+            description: '重新导入指定资源',
+            inputSchema: {
+                type: 'object',
+                properties: { url: { type: 'string' } },
+                required: ['url'],
+            },
+            handler: async function (args) {
+                return await msg('asset-db', 'reimport-asset', args.url);
+            },
+        },
+        {
+            name: 'asset_create',
+            description: '创建资源（文本内容）',
+            inputSchema: {
+                type: 'object',
+                properties: {
+                    url: { type: 'string' },
+                    content: { type: 'string' },
+                    overwrite: { type: 'boolean' },
+                },
+                required: ['url', 'content'],
+            },
+            handler: async function (args) {
+                return await msg('asset-db', 'create-asset', args.url, args.content, { overwrite: !!args.overwrite });
+            },
+        },
+        {
+            name: 'asset_save',
+            description: '保存已有资源内容',
+            inputSchema: {
+                type: 'object',
+                properties: {
+                    url: { type: 'string' },
+                    content: { type: 'string' },
+                },
+                required: ['url', 'content'],
+            },
+            handler: async function (args) {
+                return await msg('asset-db', 'save-asset', args.url, args.content);
+            },
+        },
+        {
+            name: 'asset_delete',
+            description: '删除资源',
+            inputSchema: {
+                type: 'object',
+                properties: { url: { type: 'string' } },
+                required: ['url'],
+            },
+            handler: async function (args) {
+                return await msg('asset-db', 'delete-asset', args.url);
+            },
+        },
+        {
+            name: 'asset_move',
+            description: '移动资源',
+            inputSchema: {
+                type: 'object',
+                properties: {
+                    source: { type: 'string' },
+                    target: { type: 'string' },
+                },
+                required: ['source', 'target'],
+            },
+            handler: async function (args) {
+                return await msg('asset-db', 'move-asset', args.source, args.target);
+            },
+        },
+
+        // ── preview 域 ──
+        {
+            name: 'preview_query_url',
+            description: '查询当前预览地址',
+            inputSchema: { type: 'object', properties: {} },
+            handler: async function () {
+                return { url: await local.getPreviewUrl() };
+            },
+        },
+        {
+            name: 'preview_open_browser',
+            description: '在系统默认浏览器打开预览',
+            inputSchema: { type: 'object', properties: {} },
+            handler: async function () {
+                await local.doOpenPreview();
+                return 'ok';
+            },
+        },
+        {
+            name: 'preview_refresh_browser',
+            description: '刷新已打开的预览浏览器页面（AppleScript 驱动 Chrome/Safari）',
+            inputSchema: { type: 'object', properties: {} },
+            handler: async function () {
+                await local.doRefreshPreview();
+                return 'ok';
+            },
+        },
+        {
+            name: 'preview_screenshot',
+            description: '截图预览页面到指定路径（默认 .dev/screenshot.png），返回路径',
+            inputSchema: {
+                type: 'object',
+                properties: { outputPath: { type: 'string' } },
+            },
+            handler: async function (args) {
+                var p = args.outputPath || null;
+                return await local.doScreenshot(p);
+            },
+        },
+        {
+            name: 'preview_eval_js',
+            description: '向预览 Chrome 页面注入 JS 代码并返回执行结果',
+            inputSchema: {
+                type: 'object',
+                properties: { code: { type: 'string' } },
+                required: ['code'],
+            },
+            handler: async function (args) {
+                return await local.evalInPreview(args.code);
+            },
+        },
+        {
+            name: 'preview_refresh_and_reload',
+            description: '一键：刷新资源 + 软重载场景 + 刷新预览浏览器',
+            inputSchema: { type: 'object', properties: {} },
+            handler: async function () {
+                await local.doRefreshAssets();
+                await local.doReloadScene();
+                await local.doRefreshPreview();
+                return 'ok';
+            },
+        },
+
+        // ── local 域 ──
+        {
+            name: 'local_get_status',
+            description: '获取插件本地状态（git 分支/HEAD、watchers、预览、命令日志）',
+            inputSchema: { type: 'object', properties: {} },
+            handler: async function () {
+                return await local.getStatus();
+            },
+        },
+        {
+            name: 'local_list_worktrees',
+            description: '扫描同机其他 worktree 的 dev-reload-info.json',
+            inputSchema: { type: 'object', properties: {} },
+            handler: async function () {
+                return local.listWorktrees();
+            },
+        },
+        {
+            name: 'local_open_dev_dir',
+            description: '在 Finder 打开 .dev 目录',
+            inputSchema: { type: 'object', properties: {} },
+            handler: async function () {
+                return local.openDevDir();
+            },
+        },
+        {
+            name: 'local_clean_dev_dir',
+            description: '清理 .dev 临时产物',
+            inputSchema: { type: 'object', properties: {} },
+            handler: async function () {
+                return local.cleanDevDir();
+            },
+        },
+    ];
+}
+
+function defineResources(ctx) {
+    var msg = ctx.msg;
+    var local = ctx.local;
+    return [
+        {
+            uri: 'cocos://project/info',
+            name: 'Project Info',
+            description: '项目路径、名称、引擎版本',
+            mimeType: 'application/json',
+            read: async function () {
+                return await local.getStatus();
+            },
+        },
+        {
+            uri: 'cocos://scene/tree',
+            name: 'Current Scene Tree',
+            description: '当前场景节点树 dump',
+            mimeType: 'application/json',
+            read: async function () {
+                return await msg('scene', 'query-node-tree');
+            },
+        },
+        {
+            uri: 'cocos://preview/url',
+            name: 'Preview URL',
+            description: '当前预览地址',
+            mimeType: 'text/plain',
+            read: async function () {
+                return await local.getPreviewUrl();
+            },
+        },
+    ];
+}
+
+module.exports = { defineTools: defineTools, defineResources: defineResources };

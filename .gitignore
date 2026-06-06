@@ -1,0 +1,14 @@
+# 依赖与构建产物
+node_modules/
+
+# 临时与本机产物
+.dev/
+.DS_Store
+*.log
+*.bak
+*.bak.*
+
+# 开发过程文档 / 实验（不对外开源）
+REVIEW_*.md
+CLI_ARRAY_REF_REPORT.md
+poc/
