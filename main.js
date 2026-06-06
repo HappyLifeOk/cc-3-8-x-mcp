@@ -556,7 +556,7 @@ exports.methods = {
 var _mcpServer = null;
 var MCP_DEFAULT_PORT = 7523;
 var REGISTRY_DIR = path.join(require('os').homedir(), '.cocos-mcp', 'editors');
-var SDK_PATH = path.join(__dirname, '..', 'mcp-sdk', 'index.js');
+var SDK_PATH = path.join(__dirname, 'mcp-sdk', 'index.js');
 
 /**
  * 计算项目短名（MCP 工具名前缀，需能区分不同项目）。
@@ -641,22 +641,7 @@ function findFreePort(startPort) {
 async function startMcpServer() {
     if (_mcpServer && _mcpServer.started) return;
     var port = await findFreePort(MCP_DEFAULT_PORT);
-    var sdk;
-    try {
-        sdk = require(SDK_PATH);
-    } catch (e) {
-        // SDK not found, fall back to bundled mcp-server
-        var mcp = require('./server/mcp-server');
-        _mcpServer = mcp.createServer({ port: port, host: '127.0.0.1', logger: console });
-        var tdef = require('./server/tools');
-        var ctx = buildToolCtx();
-        tdef.defineTools(ctx).forEach(function (t) { _mcpServer.registerTool(t); });
-        tdef.defineResources(ctx).forEach(function (r) { _mcpServer.registerResource(r); });
-        await _mcpServer.start();
-        writeRegistry();
-        log('MCP server up (bundled) — http://127.0.0.1:' + port + '/mcp');
-        return;
-    }
+    var sdk = require(SDK_PATH);
 
     // ── 使用 mcp-sdk ──────────────────────────────────────────────
     var tdef = require('./server/tools');
