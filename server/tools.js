@@ -310,7 +310,7 @@ function defineTools(ctx) {
         },
         {
             name: 'meta_fix_reset_border',
-            description: '修复 Cocos 重启把图片九宫格 border（subMetas.*.userData.border*）重置成 0 的 meta：扫 git 改动的 .meta，把「git 有值、工作区被清 0」的 border 还原成 git 的正确值，只动 border 字段、保留 meta 其它改动。dryRun=true 只预览不写。',
+            description: '清理 Cocos 重启造成的图片 meta 噪音：① 纯 key 顺序/格式变化（值没变只 git diff 噪音）还原成 git 原文；② 九宫格 border（subMetas.*.userData.border*）被重置成 0 的精准还原 git 的值。靠 git 对比、正确处理中文路径。dryRun=true 只预览不写。',
             inputSchema: {
                 type: 'object',
                 properties: { dryRun: { type: 'boolean', description: 'true=只预览不写文件，列出将还原的 meta' } },
