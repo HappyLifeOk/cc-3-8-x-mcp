@@ -32,11 +32,9 @@ exports.template = /* html */ `
   <section class="actions">
     <header>快捷动作</header>
     <div class="btn-grid">
-      <ui-button id="btnRefresh">刷新（资源+场景+预览）</ui-button>
+      <ui-button id="btnRefresh">刷新（资源+场景）</ui-button>
       <ui-button id="btnSoftReload">仅软重载场景</ui-button>
-      <ui-button id="btnOpenPreview">打开预览浏览器</ui-button>
       <ui-button id="btnQueryUrl">查询预览地址</ui-button>
-      <ui-button id="btnScreenshot">截图 → 复制路径</ui-button>
       <ui-button id="btnOpenDev">打开 .dev 目录</ui-button>
       <ui-button id="btnClean">清理 .dev 临时文件</ui-button>
       <ui-button id="btnRefreshStatus" class="secondary">刷新状态</ui-button>
@@ -46,17 +44,6 @@ exports.template = /* html */ `
       <ui-input id="reimportInput" placeholder="db://assets/xxx 重新导入" class="grow"></ui-input>
       <ui-button id="btnReimport">导入</ui-button>
     </div>
-  </section>
-
-  <section class="debug">
-    <header>Debug 注入</header>
-    <div class="eval-row">
-      <ui-input id="evalInput" placeholder='console.log(app.userMod.getUserValue(0))' class="grow"></ui-input>
-      <ui-button id="btnEval">执行</ui-button>
-    </div>
-    <pre id="evalResult" class="eval-result"></pre>
-    <div id="debugButtons" class="debug-buttons"></div>
-    <div class="hint-small">自定义按钮配置：<code>.dev/cc-mcp-panel.json</code>（或旧名 <code>.dev/dev-reload-panel.json</code>）→ <code>{ "buttons": [{ "label": "...", "code": "..." }] }</code></div>
   </section>
 
   <section class="worktrees">
@@ -129,18 +116,12 @@ exports.$ = {
     probeDot: '#probeDot',
     btnRefresh: '#btnRefresh',
     btnSoftReload: '#btnSoftReload',
-    btnOpenPreview: '#btnOpenPreview',
     btnQueryUrl: '#btnQueryUrl',
-    btnScreenshot: '#btnScreenshot',
     btnOpenDev: '#btnOpenDev',
     btnClean: '#btnClean',
     btnRefreshStatus: '#btnRefreshStatus',
     btnReimport: '#btnReimport',
     reimportInput: '#reimportInput',
-    evalInput: '#evalInput',
-    btnEval: '#btnEval',
-    evalResult: '#evalResult',
-    debugButtons: '#debugButtons',
     worktreeList: '#worktreeList',
     logList: '#logList',
     toast: '#toast',
@@ -203,7 +184,6 @@ exports.methods = {
             this.showToast('状态获取失败: ' + (e.message || e));
         }
         this.refreshWorktrees();
-        this.refreshDebugButtons();
     },
 
     async probePreview(url) {
@@ -237,43 +217,11 @@ exports.methods = {
         } catch (e) { /* ignore */ }
     },
 
-    async refreshDebugButtons() {
-        try {
-            const btns = await Editor.Message.request('cc-3-8-x-mcp', 'get-debug-buttons');
-            if (!Array.isArray(btns) || !btns.length) {
-                this.$.debugButtons.innerHTML = '';
-                return;
-            }
-            this.$.debugButtons.innerHTML = '';
-            btns.forEach(cfg => {
-                if (!cfg || !cfg.label || !cfg.code) return;
-                const btn = document.createElement('ui-button');
-                btn.textContent = cfg.label;
-                btn.addEventListener('confirm', () => this.runEval(cfg.code, cfg.label));
-                this.$.debugButtons.appendChild(btn);
-            });
-        } catch (e) { /* ignore */ }
-    },
-
-    async runEval(code, label) {
-        this.showToast('执行: ' + (label || code.slice(0, 30)));
-        try {
-            const r = await Editor.Message.request('cc-3-8-x-mcp', 'eval-in-preview', code);
-            if (r && r.ok) {
-                this.$.evalResult.textContent = '✓ ' + (r.result || '(no return)');
-            } else {
-                this.$.evalResult.textContent = '✗ ' + ((r && r.error) || 'unknown');
-            }
-        } catch (e) {
-            this.$.evalResult.textContent = '✗ ' + (e.message || e);
-        }
-    },
-
     async onRefreshClick() {
         this.showToast('刷新中…');
         try {
             await Editor.Message.request('cc-3-8-x-mcp', 'trigger-refresh');
-            this.showToast('已刷新资源+场景+预览');
+            this.showToast('已刷新资源+场景');
             this.refreshStatus();
         } catch (e) { this.showToast('失败: ' + (e.message || e)); }
     },
@@ -281,22 +229,11 @@ exports.methods = {
         try { await Editor.Message.request('cc-3-8-x-mcp', 'soft-reload-scene'); this.showToast('场景已软重载'); }
         catch (e) { this.showToast('失败: ' + (e.message || e)); }
     },
-    async onOpenPreviewClick() {
-        try { await Editor.Message.request('cc-3-8-x-mcp', 'open-preview'); this.showToast('已在浏览器打开预览'); }
-        catch (e) { this.showToast('失败: ' + (e.message || e)); }
-    },
     async onQueryUrlClick() {
         try {
             const url = await Editor.Message.request('cc-3-8-x-mcp', 'query-preview-url');
             this.showToast('预览: ' + url);
             this.refreshStatus();
-        } catch (e) { this.showToast('失败: ' + (e.message || e)); }
-    },
-    async onScreenshotClick() {
-        this.showToast('截图中…');
-        try {
-            const p = await Editor.Message.request('cc-3-8-x-mcp', 'screenshot-copy');
-            this.showToast('截图路径已复制: ' + p);
         } catch (e) { this.showToast('失败: ' + (e.message || e)); }
     },
     async onOpenDevClick() {
@@ -341,11 +278,6 @@ exports.methods = {
             this.refreshStatus();
         } catch (e) { this.showToast('失败: ' + (e.message || e)); }
     },
-    async onEvalClick() {
-        const code = (this.$.evalInput.value || '').trim();
-        if (!code) { this.showToast('请输入 JS 代码'); return; }
-        await this.runEval(code);
-    },
 };
 
 function escapeHtml(s) {
@@ -357,14 +289,11 @@ function escapeHtml(s) {
 exports.ready = function () {
     this.$.btnRefresh.addEventListener('confirm', () => this.onRefreshClick());
     this.$.btnSoftReload.addEventListener('confirm', () => this.onSoftReloadClick());
-    this.$.btnOpenPreview.addEventListener('confirm', () => this.onOpenPreviewClick());
     this.$.btnQueryUrl.addEventListener('confirm', () => this.onQueryUrlClick());
-    this.$.btnScreenshot.addEventListener('confirm', () => this.onScreenshotClick());
     this.$.btnOpenDev.addEventListener('confirm', () => this.onOpenDevClick());
     this.$.btnClean.addEventListener('confirm', () => this.onCleanClick());
     this.$.btnRefreshStatus.addEventListener('confirm', () => this.refreshStatus());
     this.$.btnReimport.addEventListener('confirm', () => this.onReimportClick());
-    this.$.btnEval.addEventListener('confirm', () => this.onEvalClick());
     this.$.btnCopyMcpUrl.addEventListener('confirm', () => this.onCopyMcpUrl());
     this.$.btnCopyCli.addEventListener('confirm', () => this.onCopyCli());
     this.$.btnRestartMcp.addEventListener('confirm', () => this.onRestartMcp());

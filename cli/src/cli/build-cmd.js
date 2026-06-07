@@ -41,15 +41,27 @@ function parseArgs(rest) {
     return a;
 }
 
-// 解析 CocosCreator 可执行：--cocos 显式优先，否则 --version 拼标准安装路径（macOS）
+// 按平台拼 Cocos Creator 标准安装路径。Win/Linux 路径规律待目标平台实测，建议优先用 --cocos 显式。
+function cocosStdPath(ver) {
+    if (process.platform === 'darwin') {
+        return `/Applications/Cocos/Creator/${ver}/CocosCreator.app/Contents/MacOS/CocosCreator`;
+    }
+    if (process.platform === 'win32') {
+        // TODO[win-verify]: Win 上 CocosDashboard 安装路径待实测确认（下面是常见默认，未验证）
+        return `C:\\ProgramData\\cocos\\editors\\Creator\\${ver}\\CocosCreator.exe`;
+    }
+    return ''; // linux 等：无标准约定，要求 --cocos 显式
+}
+
+// 解析 CocosCreator 可执行：--cocos 显式优先，否则 --version 拼标准安装路径
 function resolveCocos(a) {
     if (a.cocos) {
         if (!fs.existsSync(a.cocos)) die(`--cocos 路径不存在: ${a.cocos}`);
         return a.cocos;
     }
     if (a.version) {
-        const p = `/Applications/Cocos/Creator/${a.version}/CocosCreator.app/Contents/MacOS/CocosCreator`;
-        if (!fs.existsSync(p)) die(`版本 ${a.version} 不在标准路径: ${p}\n  用 --cocos <可执行绝对路径> 显式指定`);
+        const p = cocosStdPath(a.version);
+        if (!p || !fs.existsSync(p)) die(`版本 ${a.version} 不在标准安装路径${p ? ': ' + p : ''}\n  用 --cocos <可执行绝对路径> 显式指定`);
         return p;
     }
     die('需指定 CocosCreator 可执行：--cocos <path> 或 --version <如 3.8.8>');

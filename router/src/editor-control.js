@@ -15,7 +15,7 @@
  *
  * [editor] tool 命名不加 shortName 前缀（router 全局工具）。
  *
- * 仅支持 macOS（execPath 解析按 /Applications/Cocos/Creator/<version>/ 规律）。
+ * 跨平台：execPath 优先用注册表（编辑器写入）/ 运行进程查询，不硬编码平台安装路径。
  */
 
 var fs = require('fs');
@@ -141,21 +141,25 @@ function resolveTarget(args) {
 /** 从运行中进程的命令行抓可执行路径（编辑器启动命令首段，--project 之前） */
 function execPathFromPs(pid) {
     try {
+        if (process.platform === 'win32') {
+            // TODO[win-verify]: Win 没有 ps。下面用 wmic 拿可执行路径，需在 Win 上实测确认（新版 Win 可能要改 PowerShell Get-CimInstance）
+            var winOut = cp.execFileSync('wmic', ['process', 'where', 'processid=' + pid, 'get', 'ExecutablePath', '/value'], { encoding: 'utf-8' });
+            var wm = winOut.match(/ExecutablePath=(.+)/);
+            return wm ? wm[1].trim() : '';
+        }
+        // mac / linux: ps 抓命令行首段（--project 之前）
         var out = cp.execFileSync('ps', ['-p', String(pid), '-o', 'command='], { encoding: 'utf-8' }).trim();
         if (!out) return '';
-        // 形如：/Applications/Cocos/Creator/3.8.8/CocosCreator.app/Contents/MacOS/CocosCreator --project /x ...
-        // 可执行路径本身不含 " --"，按它切分安全
         var idx = out.indexOf(' --');
         return (idx >= 0 ? out.slice(0, idx) : out.split(/\s+/)[0]).trim();
     } catch (e) { return ''; }
 }
 
 /**
- * 解析编辑器可执行路径，三级 fallback：
+ * 解析编辑器可执行路径，两级 fallback：
  *   1. 注册文件 execPath 字段（main.js 写入，最准）
- *   2. 从活进程 ps 命令行抓（编辑器还活着时）—— restart 会在 kill 前调用，此时旧进程还在
- *   3. 按 editorVersion 拼标准安装路径
- * 全部失败抛错，提示带上尝试过的路径。
+ *   2. 从活进程命令行抓（编辑器还活着时）—— restart 会在 kill 前调用，此时旧进程还在
+ * 全部失败抛错。
  */
 function resolveExecPath(entry) {
     if (entry.execPath && fs.existsSync(entry.execPath)) return entry.execPath;
@@ -165,18 +169,11 @@ function resolveExecPath(entry) {
         if (fromPs && fs.existsSync(fromPs)) return fromPs;
     }
 
-    if (entry.editorVersion) {
-        var guess = '/Applications/Cocos/Creator/' + entry.editorVersion +
-            '/CocosCreator.app/Contents/MacOS/CocosCreator';
-        if (fs.existsSync(guess)) return guess;
-    }
-
     throw new Error(
         'editor-control: 无法解析 Cocos 编辑器可执行路径。\n' +
         '  注册文件 execPath: ' + (entry.execPath || '(无)') + '\n' +
         '  editorVersion: ' + (entry.editorVersion || '(无)') + '\n' +
-        '请确认 Cocos Creator 装在标准路径 /Applications/Cocos/Creator/<version>/，' +
-        '或重启编辑器让扩展写入 execPath 字段后再试。'
+        '请重启编辑器让扩展写入 execPath 字段，或用 editor_spawn 显式传 execPath。'
     );
 }
 
@@ -223,38 +220,19 @@ async function killEditor(pid, opts) {
 }
 
 /**
- * 冷启动场景解析 execPath：进程已不在，没有活进程可 ps 抓，靠四级 fallback：
+ * 冷启动场景解析 execPath：进程已不在，没有活进程可 ps 抓，靠两级 fallback：
  *   1. args.execPath 显式
- *   2. args.version 拼标准路径
- *   3. 借任意一条注册 entry 的 execPath —— execPath 是机器级安装路径，跨项目通用，
+ *   2. 借任意一条注册 entry 的 execPath —— execPath 是机器级安装路径，跨项目通用、跨平台，
  *      哪怕那条 entry 是别的项目 / 已 stale 也能用
- *   4. 扫 /Applications/Cocos/Creator 下唯一安装版本
  */
 function resolveExecPathForSpawn(args, projectPath) {
     if (args.execPath && fs.existsSync(args.execPath)) return args.execPath;
 
-    if (args.version) {
-        var byVer = '/Applications/Cocos/Creator/' + args.version + '/CocosCreator.app/Contents/MacOS/CocosCreator';
-        if (fs.existsSync(byVer)) return byVer;
-    }
-
+    // 借任意一条注册 entry 的 execPath（机器级安装路径，跨项目通用、跨平台）
     var borrowed = readRegistryEntries().filter(function (e) { return e.execPath && fs.existsSync(e.execPath); })[0];
     if (borrowed) return borrowed.execPath;
 
-    var base = '/Applications/Cocos/Creator';
-    try {
-        var vers = fs.readdirSync(base).filter(function (v) {
-            return fs.existsSync(base + '/' + v + '/CocosCreator.app/Contents/MacOS/CocosCreator');
-        });
-        if (vers.length === 1) return base + '/' + vers[0] + '/CocosCreator.app/Contents/MacOS/CocosCreator';
-        if (vers.length > 1) {
-            throw new Error('editor_spawn: ' + base + ' 下有多个版本 [' + vers.join(', ') + ']，请用 version 指定要启动哪个。');
-        }
-    } catch (e) {
-        if (/多个版本/.test(e.message)) throw e;
-    }
-
-    throw new Error('editor_spawn: 无法解析 Cocos 可执行路径（execPath/version 都没给，注册表也无可借项）。请传 execPath 或 version。');
+    throw new Error('editor_spawn: 无法解析 Cocos 可执行路径。请传 execPath（注册表无可借项时无法推断安装路径）。');
 }
 
 /**
@@ -387,7 +365,7 @@ var EDITOR_TOOLS = [
     {
         name: 'editor_restart',
         description: '[editor] 重启 Cocos 编辑器进程（kill 旧实例 → 重新拉起 → 等就绪）。' +
-            '不需要编辑器在运行也能调（挂 router 进程）。仅 macOS。' +
+            '不需要编辑器在运行也能调（挂 router 进程）。' +
             '返回 oldPid / launchedPid / kill 结果 / ready 状态（含新 pid·port·url）。',
         inputSchema: {
             type: 'object',
@@ -433,7 +411,7 @@ var EDITOR_TOOLS = [
     {
         name: 'editor_spawn',
         description: '[editor] 从零启动一个 Cocos 编辑器（进程完全不在时用，如崩溃后恢复）。' +
-            '同项目已有活跃实例则直接返回不重复开（Cocos 不支持同项目多开）。仅 macOS。',
+            '同项目已有活跃实例则直接返回不重复开（Cocos 不支持同项目多开）。',
         inputSchema: {
             type: 'object',
             properties: {

@@ -128,17 +128,6 @@ async function getPreviewUrl() {
     return 'http://localhost:unknown-port';
 }
 
-/**
- * 生成 AppleScript 匹配预览 tab 的条件：只按端口匹配、忽略 host。
- * 同一预览实例在多网卡 / 切换网络时 host(IP) 会变，但端口稳定（per-project 编辑器分配）。
- * 避免字面比完整 IP:port 在环境切换后失配（截图退化全屏、eval 报找不到 tab）。
- */
-function tabMatchClause(url) {
-    var m = url && url.match(/:(\d+)(?:\/|$)/);
-    var port = m ? m[1] : '';
-    return port ? ('URL of t contains ":' + port + '/"') : ('URL of t starts with "' + url + '"');
-}
-
 function sleep(ms) {
     return new Promise(function (resolve) { setTimeout(resolve, ms); });
 }
@@ -161,151 +150,12 @@ async function doReloadScene() {
     log('scene reloaded.');
 }
 
-/**
- * 在浏览器中打开预览
- */
-async function doOpenPreview() {
-    var url = await getPreviewUrl();
-    // 先查有没有该端口的 tab,有就不重开——避免在已有(带 tid 的)预览 tab 之外再冒一个裸地址 tab
-    var checkScript = [
-        'tell application "Google Chrome"',
-        '  repeat with w in windows',
-        '    repeat with t in tabs of w',
-        '      if ' + tabMatchClause(url) + ' then return "FOUND"',
-        '    end repeat',
-        '  end repeat',
-        '  return "NONE"',
-        'end tell'
-    ].join('\n');
-    return new Promise(function (resolve) {
-        exec('osascript -e \'' + checkScript.replace(/'/g, "'\\''") + '\'', function (err, stdout) {
-            if (!err && (stdout || '').trim() === 'FOUND') {
-                log('preview tab already open (port matched), skip open');
-                resolve();
-            } else {
-                log('opening preview: ' + url);
-                exec('open "' + url + '"', function () { resolve(); });
-            }
-        });
-    });
-}
-
-/**
- * 刷新已打开的预览浏览器页面
- */
-async function doRefreshPreview() {
-    var url = await getPreviewUrl();
-    log('refreshing preview browser...');
-    // 用 AppleScript 找到预览页面并刷新
-    var script = [
-        'tell application "Google Chrome"',
-        '  set found to false',
-        '  repeat with w in windows',
-        '    repeat with t in tabs of w',
-        '      if ' + tabMatchClause(url) + ' then',
-        '        tell t to reload',
-        '        set found to true',
-        '      end if',
-        '    end repeat',
-        '  end repeat',
-        '  if not found then',
-        '    open location "' + url + '"',
-        '  end if',
-        'end tell'
-    ].join('\n');
-
-    return new Promise(function (resolve) {
-        exec('osascript -e \'' + script.replace(/'/g, "'\\''") + '\'', function (err) {
-            if (err) {
-                log('Chrome refresh failed, trying Safari...');
-                var safariScript = [
-                    'tell application "Safari"',
-                    '  set found to false',
-                    '  repeat with w in windows',
-                    '    repeat with t in tabs of w',
-                    '      if ' + tabMatchClause(url) + ' then',
-                    '        tell t to do JavaScript "location.reload()"',
-                    '        set found to true',
-                    '      end if',
-                    '    end repeat',
-                    '  end repeat',
-                    '  if not found then',
-                    '    open location "' + url + '"',
-                    '  end if',
-                    'end tell'
-                ].join('\n');
-                exec('osascript -e \'' + safariScript.replace(/'/g, "'\\''") + '\'', function () {
-                    resolve();
-                });
-            } else {
-                log('preview refreshed.');
-                resolve();
-            }
-        });
-    });
-}
-
-/**
- * 截取预览浏览器页面的截图
- */
-async function doScreenshot(outputPath) {
-    var url = await getPreviewUrl();
-    log('taking screenshot → ' + outputPath);
-
-    return new Promise(function (resolve) {
-        // 等待渲染
-        setTimeout(function () {
-            // 优先用 Chrome DevTools Protocol 截图（更精准）
-            var chromeScript = [
-                'tell application "Google Chrome"',
-                '  repeat with w in windows',
-                '    repeat with t in tabs of w',
-                '      if ' + tabMatchClause(url) + ' then',
-                '        set index of w to 1',
-                '        set active tab index of w to (index of t)',
-                '        delay 0.5',
-                '        return id of w',
-                '      end if',
-                '    end repeat',
-                '  end repeat',
-                '  return ""',
-                'end tell'
-            ].join('\n');
-
-            exec('osascript -e \'' + chromeScript.replace(/'/g, "'\\''") + '\'', function (err, stdout) {
-                var windowId = stdout ? stdout.trim() : '';
-                if (windowId) {
-                    // 截取 Chrome 窗口
-                    exec('screencapture -o -l ' + windowId + ' "' + outputPath + '"', function (err2) {
-                        if (err2) {
-                            log('window capture failed, fallback to full screen');
-                            exec('screencapture -o "' + outputPath + '"', function () { resolve(); });
-                        } else {
-                            log('screenshot saved (browser window).');
-                            resolve();
-                        }
-                    });
-                } else {
-                    // 降级：截取整个屏幕
-                    log('preview tab not found, capturing full screen');
-                    exec('screencapture -o "' + outputPath + '"', function () { resolve(); });
-                }
-            });
-        }, 1000);
-    });
-}
-
 // ── 消息处理（支持从其他扩展或命令行调用） ──
 
 exports.methods = {
     async refreshAssets() {
         await doRefreshAssets();
         await doReloadScene();
-    },
-    async screenshot() {
-        var outputPath = path.join(Editor.Project.path, '.dev', 'screenshot.png');
-        await doScreenshot(outputPath);
-        return outputPath;
     },
     async queryPreviewUrl() {
         var url = await getPreviewUrl();
@@ -342,11 +192,10 @@ exports.methods = {
             },
         };
     },
-    /** Panel 使用：刷新资源 + 重载场景 + 刷新预览 */
+    /** Panel 使用：刷新资源 + 重载场景 */
     async triggerRefresh() {
         await doRefreshAssets();
         await doReloadScene();
-        await doRefreshPreview();
         return true;
     },
     /** Panel 使用：重新导入指定 assetUrl */
@@ -359,7 +208,9 @@ exports.methods = {
     openDevDir() {
         var devDir = path.join(Editor.Project.path, DEV_DIR);
         if (!fs.existsSync(devDir)) fs.mkdirSync(devDir, { recursive: true });
-        exec('open "' + devDir + '"');
+        // 跨平台在系统文件管理器打开：mac=open / win=explorer / linux=xdg-open
+        var opener = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'explorer' : 'xdg-open';
+        exec(opener + ' "' + devDir + '"');
         return devDir;
     },
     /** Panel 使用：只做场景软重载 */
@@ -367,23 +218,6 @@ exports.methods = {
         pushCommandLog('panel', 'reload-scene');
         await doReloadScene();
         return true;
-    },
-    /** Panel 使用：在浏览器中打开预览 */
-    async openPreview() {
-        pushCommandLog('panel', 'open-preview');
-        await doOpenPreview();
-        return true;
-    },
-    /** Panel 使用：截图并把路径复制到剪贴板 */
-    async screenshotCopy() {
-        pushCommandLog('panel', 'screenshot');
-        var outputPath = path.join(Editor.Project.path, DEV_DIR, 'screenshot.png');
-        await doScreenshot(outputPath);
-        return new Promise(function (resolve) {
-            exec('printf %s "' + outputPath.replace(/"/g, '\\"') + '" | pbcopy', function () {
-                resolve(outputPath);
-            });
-        });
     },
     /** Panel 使用：清理 .dev 临时产物（保留 dev-reload-info.json / dev-reload-panel.json / cc-mcp-panel.json） */
     cleanDevDir() {
@@ -403,56 +237,6 @@ exports.methods = {
             });
         } catch (e) { /* ignore */ }
         return removed;
-    },
-    /** Panel 使用：向预览 Chrome 页面注入 JS 代码并返回执行结果 */
-    async evalInPreview(code) {
-        if (!code) return { ok: false, error: 'empty code' };
-        pushCommandLog('panel', 'eval:' + code.slice(0, 40));
-        var url = await getPreviewUrl();
-        // AppleScript 需要把 JS 代码里的双引号转义
-        // 包一层 window.app 校验:连到的 tab 不是游戏(编辑器内嵌预览 / 错 tab)就明确报错,不默默 eval 错上下文
-        var guarded = '(function(){ if(typeof window==="undefined"||!window.app){return "__NO_GAME_CONTEXT__";} return (' + code + '); })()';
-        var escaped = guarded.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-        var script = [
-            'tell application "Google Chrome"',
-            '  repeat with w in windows',
-            '    repeat with t in tabs of w',
-            '      if ' + tabMatchClause(url) + ' then',
-            '        return (execute t javascript "' + escaped + '")',
-            '      end if',
-            '    end repeat',
-            '  end repeat',
-            '  return "__NO_PREVIEW_TAB__"',
-            'end tell'
-        ].join('\n');
-        return new Promise(function (resolve) {
-            exec('osascript -e \'' + script.replace(/'/g, "'\\''") + '\'', function (err, stdout, stderr) {
-                if (err) {
-                    resolve({ ok: false, error: (stderr || err.message || '').trim() });
-                } else {
-                    var out = (stdout || '').trim();
-                    if (out === '__NO_PREVIEW_TAB__') {
-                        resolve({ ok: false, error: '未找到预览标签页（先在 Chrome 打开 ' + url + '）' });
-                    } else if (out === '__NO_GAME_CONTEXT__') {
-                        resolve({ ok: false, error: '连到的 tab 没有游戏上下文（window.app undefined）——多半连的是编辑器内嵌预览或别的 tab。游戏要在浏览器跑且 app.ts 已加载；必要时用 playwright 直连游戏 tab' });
-                    } else {
-                        resolve({ ok: true, result: out });
-                    }
-                }
-            });
-        });
-    },
-    /** Panel 使用：读取用户自定义的 debug 按钮配置 */
-    getDebugButtons() {
-        var cfgPath = path.join(Editor.Project.path, PANEL_CONFIG_FILE);
-        if (!fs.existsSync(cfgPath)) return [];
-        try {
-            var cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf-8'));
-            if (Array.isArray(cfg.buttons)) return cfg.buttons;
-            return [];
-        } catch (e) {
-            return [];
-        }
     },
     /** Panel 使用：扫同机其他 worktree 的 dev-reload-info.json */
     listWorktrees() {
@@ -575,15 +359,13 @@ function getProjectShortName() {
 
 /**
  * 解析 Cocos 编辑器主进程可执行路径，写进注册文件供 router 的 editor_restart 拉起用。
- * 优先 process.argv[0]（Electron 主进程启动命令首段，即 .app 可执行），按 version 拼标准路径兜底。
- * 排除 Helper（渲染/GPU 子进程路径），要外层主可执行。解析不到返回空串，router 端还有 ps / version 两级 fallback。
+ * 取 process.argv[0] / process.execPath（编辑器主进程可执行，跨平台）。
+ * 排除 Helper（渲染/GPU 子进程），解析不到返回空串。
  */
 function getEditorExecPath() {
     var candidates = [];
     try { if (process.argv && process.argv[0]) candidates.push(process.argv[0]); } catch (e) { /* ignore */ }
     try { if (process.execPath) candidates.push(process.execPath); } catch (e) { /* ignore */ }
-    var ver = (Editor.App && Editor.App.version) ? Editor.App.version : '';
-    if (ver) candidates.push('/Applications/Cocos/Creator/' + ver + '/CocosCreator.app/Contents/MacOS/CocosCreator');
     for (var i = 0; i < candidates.length; i++) {
         var c = candidates[i];
         if (c && /CocosCreator/.test(c) && c.indexOf('Helper') < 0) {
@@ -699,20 +481,13 @@ function buildToolCtx() {
         local: {
             getPreviewUrl: getPreviewUrl,
             doReimport: doReimport,
-            doRefreshPreview: doRefreshPreview,
-            doOpenPreview: doOpenPreview,
-            doScreenshot: async function (outputPath) {
-                var p = outputPath || path.join(Editor.Project.path, DEV_DIR, 'screenshot.png');
-                await doScreenshot(p);
-                return p;
-            },
             doRefreshAssets: doRefreshAssets,
             doReloadScene: doReloadScene,
-            evalInPreview: function (code) { return exports.methods.evalInPreview(code); },
             listWorktrees: function () { return exports.methods.listWorktrees(); },
             openDevDir: function () { return exports.methods.openDevDir(); },
             cleanDevDir: function () { return exports.methods.cleanDevDir(); },
             getStatus: function () { return exports.methods.getStatus(); },
+            reloadPackage: doRestartSelf,
         },
     };
 }
@@ -748,13 +523,13 @@ async function doOpenPrefab(urlOrPath) {
     log('open-prefab: opened ' + dbUrl + ' (uuid=' + uuid + ')');
 }
 
-/** 重启整个插件（disable → enable）让 main.js / tools.js / server/* 的代码改动生效。
- *  注意：本函数自身处于即将被卸载的 main.js 上下文，必须 fire-and-forget。
+/** 重启指定插件（disable → enable）让其 JS 代码改动生效；name 缺省为本插件 cc-3-8-x-mcp。
+ *  注意：reload 本插件自身时，本函数处于即将被卸载的 main.js 上下文，必须 fire-and-forget。
  *  Editor.Package.disable 是 host 进程 API，扩展沙箱卸载后仍然有效；
  *  enable 在 disable 完成后用 setTimeout 触发，给 unload 收尾留窗口。
  */
-function doRestartSelf() {
-    var name = 'cc-3-8-x-mcp';
+function doRestartSelf(name) {
+    name = name || 'cc-3-8-x-mcp';
     log('restart-package: scheduling disable → enable for ' + name);
     setImmediate(function () {
         Promise.resolve()
@@ -771,18 +546,19 @@ function doRestartSelf() {
 /**
  * 分发单条 refresh 命令。
  *
- * 协议精简：只支持 `restart-package`（disable→enable 整个扩展，让 JS 代码改动生效）。
+ * 协议：`restart-package [name]`（disable→enable 指定扩展让 JS 改动生效；缺省 name 重启本插件自身）。
  * 资源刷新 / 场景重载 / 预览刷新 / 截图等走 MCP tool（preview_refresh_and_reload /
- * asset_reimport / preview_screenshot 等）或面板按钮，不再通过文件协议触发。
+ * asset_reimport 等）或面板按钮，不再通过文件协议触发。
  */
 async function handleRefreshCommand(cmd) {
     if (!cmd) return;
     pushCommandLog('refresh', cmd);
-    if (cmd === 'restart-package') {
-        doRestartSelf();
+    var parts = cmd.split(/\s+/);
+    if (parts[0] === 'restart-package') {
+        doRestartSelf(parts[1]);   // parts[1] 可选：缺省重启自身，指定则 reload 该扩展
         return;
     }
-    log('refresh: unknown command — ' + cmd + '（仅支持 restart-package）');
+    log('refresh: unknown command — ' + cmd + '（仅支持 restart-package [name]）');
 }
 
 /** 启动 .dev/refresh 文件 watcher（写入命令 → 读取 → 执行 → 清空） */

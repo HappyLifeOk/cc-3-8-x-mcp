@@ -8,7 +8,7 @@
 
 function defineTools(ctx) {
     var msg = ctx.msg;   // async (target, name, ...args) => result
-    var local = ctx.local; // { getPreviewUrl, doReimport, doRefreshPreview, doOpenPreview, doScreenshot, doRefreshAssets, doReloadScene, evalInPreview, listWorktrees, openDevDir, cleanDevDir, getStatus, getPanelConfig }
+    var local = ctx.local; // { getPreviewUrl, doReimport, doRefreshAssets, doReloadScene, listWorktrees, openDevDir, cleanDevDir, getStatus }
 
     return [
         // ── scene 域 ──
@@ -252,60 +252,30 @@ function defineTools(ctx) {
             },
         },
         {
-            name: 'preview_open_browser',
-            description: '在系统默认浏览器打开预览',
-            inputSchema: { type: 'object', properties: {} },
-            handler: async function () {
-                await local.doOpenPreview();
-                return 'ok';
-            },
-        },
-        {
-            name: 'preview_refresh_browser',
-            description: '刷新已打开的预览浏览器页面（AppleScript 驱动 Chrome/Safari）',
-            inputSchema: { type: 'object', properties: {} },
-            handler: async function () {
-                await local.doRefreshPreview();
-                return 'ok';
-            },
-        },
-        {
-            name: 'preview_screenshot',
-            description: '截图预览页面到指定路径（默认 .dev/screenshot.png），返回路径',
-            inputSchema: {
-                type: 'object',
-                properties: { outputPath: { type: 'string' } },
-            },
-            handler: async function (args) {
-                var p = args.outputPath || null;
-                return await local.doScreenshot(p);
-            },
-        },
-        {
-            name: 'preview_eval_js',
-            description: '向预览 Chrome 页面注入 JS 代码并返回执行结果',
-            inputSchema: {
-                type: 'object',
-                properties: { code: { type: 'string' } },
-                required: ['code'],
-            },
-            handler: async function (args) {
-                return await local.evalInPreview(args.code);
-            },
-        },
-        {
             name: 'preview_refresh_and_reload',
-            description: '一键：刷新资源 + 软重载场景 + 刷新预览浏览器',
+            description: '一键：刷新资源 + 软重载场景',
             inputSchema: { type: 'object', properties: {} },
             handler: async function () {
                 await local.doRefreshAssets();
                 await local.doReloadScene();
-                await local.doRefreshPreview();
                 return 'ok';
             },
         },
 
         // ── local 域 ──
+        {
+            name: 'local_reload_package',
+            description: 'reload（disable→enable）指定编辑器扩展，让其 JS 代码改动生效，无需重启编辑器。本质 Editor.Package.disable→enable，fire-and-forget 立即返回。',
+            inputSchema: {
+                type: 'object',
+                properties: { name: { type: 'string', description: '扩展名（package.json 的 name，如 state-ctrl-gen）' } },
+                required: ['name'],
+            },
+            handler: async function (args) {
+                local.reloadPackage(args.name);
+                return { ok: true, reloaded: args.name };
+            },
+        },
         {
             name: 'local_get_status',
             description: '获取插件本地状态（git 分支/HEAD、watchers、预览、命令日志）',

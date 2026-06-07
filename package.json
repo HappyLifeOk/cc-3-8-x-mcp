@@ -40,16 +40,11 @@
       "get-status": { "methods": ["getStatus"] },
       "get-mcp-config": { "methods": ["getMcpConfig"] },
       "refresh-assets": { "methods": ["refreshAssets"] },
-      "screenshot": { "methods": ["screenshot"] },
       "query-preview-url": { "methods": ["queryPreviewUrl"] },
       "trigger-refresh": { "methods": ["triggerRefresh"] },
       "trigger-reimport": { "methods": ["triggerReimport"] },
       "soft-reload-scene": { "methods": ["softReloadScene"] },
-      "open-preview": { "methods": ["openPreview"] },
-      "screenshot-copy": { "methods": ["screenshotCopy"] },
       "clean-dev-dir": { "methods": ["cleanDevDir"] },
-      "eval-in-preview": { "methods": ["evalInPreview"] },
-      "get-debug-buttons": { "methods": ["getDebugButtons"] },
       "list-worktrees": { "methods": ["listWorktrees"] },
       "open-dev-dir": { "methods": ["openDevDir"] }
     }
