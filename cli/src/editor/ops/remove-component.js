@@ -15,7 +15,7 @@
 'use strict';
 
 const { normalizeComponentType, isStub, resolveNode } = require('../helpers.js');
-const { cleanupRootTargetOverrides } = require('../id-utils.js');
+const { cleanupRootTargetOverrides, clearOrphanAssetRefs } = require('../id-utils.js');
 
 function execRemoveComponent(prefabData, op) {
   const { elements, rootId } = prefabData;
@@ -71,6 +71,12 @@ function execRemoveComponent(prefabData, op) {
     removedIds.add(matchedComp.__prefab.__id__);
   }
   cleanupRootTargetOverrides(elements, rootId, removedIds);
+
+  // 清孤儿组件里的 cc.Asset 引用字段（_spriteFrame / _defaultClip / _clips / _font 等）。
+  // 不清会被 bundle build 扫整个 data 数组撞到、算入依赖图，运行时拉不存在的资源 404。
+  for (const id of removedIds) {
+    clearOrphanAssetRefs(elements[id]);
+  }
 
   return nodeId;
 }

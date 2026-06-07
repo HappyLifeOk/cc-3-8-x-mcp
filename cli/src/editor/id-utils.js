@@ -119,6 +119,57 @@ function disconnectSubtree(elements, nodeId) {
   }
 }
 
+// ─── 孤儿元素 cc.Asset 引用清理 ──────────────────────────────
+
+/**
+ * 清除元素里所有 cc.Asset 引用字段（含 `{__uuid__, __expectedType__}` 的对象，
+ * 或全部由这类对象组成的数组），把对象置 null、数组置 []。
+ *
+ * 用于 remove-node / remove-component：cli 保留孤儿元素（保持其他 __id__ 稳定）的
+ * 策略本身正确，但孤儿元素里残留的 cc.Asset uuid 引用会被 bundle build 扫整个
+ * data 数组时撞到、算入依赖图，运行时拉不存在的资源触发 404
+ * （典型现象：`GET /assets/<bundle>/import/<uuid>.json 404`）。
+ *
+ * 只处理顶层字段——cc.Asset 引用一般在第一层（_spriteFrame / _defaultClip / _clips /
+ * _font / _skeletonData / asset 等）；深层递归不做，避免误清非 asset 的嵌套对象。
+ *
+ * 跳过结构字段（__type__/_parent/_prefab/_components/_children/node/__editorExtras__ 等）——
+ * 这些走 disconnectSubtree / 父引用清理。
+ */
+function clearOrphanAssetRefs(element) {
+  if (!element || typeof element !== 'object') return;
+  for (const key of Object.keys(element)) {
+    if (
+      key.startsWith('__') ||
+      key === 'node' ||
+      key === '_parent' ||
+      key === '_prefab' ||
+      key === '_components' ||
+      key === '_children'
+    ) {
+      continue;
+    }
+    const val = element[key];
+    if (!val || typeof val !== 'object') continue;
+
+    // 单个 cc.Asset 引用 {__uuid__: string, __expectedType__: string}
+    if (typeof val.__uuid__ === 'string' && typeof val.__expectedType__ === 'string') {
+      element[key] = null;
+      continue;
+    }
+
+    // 全部由 cc.Asset 引用组成的数组（如 cc.Animation._clips）
+    if (Array.isArray(val) && val.length > 0) {
+      const allAssetRefs = val.every(
+        (v) => v && typeof v === 'object' && typeof v.__uuid__ === 'string' && typeof v.__expectedType__ === 'string'
+      );
+      if (allAssetRefs) {
+        element[key] = [];
+      }
+    }
+  }
+}
+
 // ─── elements 重排：__id__ 引用映射 / 收缩 ───────────────────
 //
 // 用于 dedupe-component：合并删除组件后，所有 __id__ 指向被删/被合并对象的
@@ -281,6 +332,7 @@ module.exports = {
   collectExistingFileIds,
   uniqueFileId,
   disconnectSubtree,
+  clearOrphanAssetRefs,
   countPropertyRefs,
   isReservedCompField,
   filterCompRefsInElements,

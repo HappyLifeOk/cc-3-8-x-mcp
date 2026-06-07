@@ -6,7 +6,12 @@
 'use strict';
 
 const { isStub, resolveNode } = require('../helpers.js');
-const { disconnectSubtree, cleanupRootTargetOverrides, syncNestedRoots } = require('../id-utils.js');
+const {
+  disconnectSubtree,
+  clearOrphanAssetRefs,
+  cleanupRootTargetOverrides,
+  syncNestedRoots,
+} = require('../id-utils.js');
 
 function execRemoveNode(prefabData, op) {
   const { elements, rootId } = prefabData;
@@ -47,6 +52,12 @@ function execRemoveNode(prefabData, op) {
   const subtreeIds = collectSubtreeIds(elements, targetId);
 
   disconnectSubtree(elements, targetId);
+
+  // 清孤儿元素里的 cc.Asset 引用字段（asset / _spriteFrame / _defaultClip / _clips 等）。
+  // 不清会被 bundle build 扫整个 data 数组撞到、算入依赖图，运行时拉不存在的资源 404。
+  for (const id of subtreeIds) {
+    clearOrphanAssetRefs(elements[id]);
+  }
 
   // 软删后同步外层 PrefabInfo.nestedPrefabInstanceRoots，清掉孤儿 stub 引用
   syncNestedRoots(elements, rootId);
