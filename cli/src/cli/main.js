@@ -20,7 +20,7 @@ const { cmdExtractPrefab } = require('./extract-cmd.js');
 const { cmdCompactPrefab } = require('./compact-cmd.js');
 const { cmdEnsureMeta } = require('./ensure-meta-cmd.js');
 const { cmdBuild } = require('./build-cmd.js');
-const { cmdFixBorders } = require('./fix-borders-cmd.js');
+const { cmdFixMeta } = require('./fix-meta-cmd.js');
 
 function die(msg) {
   process.stderr.write('Error: ' + msg + '\n');
@@ -56,10 +56,10 @@ function main(argv) {
     cmdEnsureMeta(rest);
   } else if (cmd === 'build') {
     cmdBuild(rest);
-  } else if (cmd === 'fix-borders') {
-    cmdFixBorders(rest);
+  } else if (cmd === 'fix-meta') {
+    cmdFixMeta(rest);
   } else {
-    die(`未知子命令 "${cmd}"，可用: query / set / batch / anim / diff / create-prefab / extract-prefab / compact-prefab / ensure-meta / build / fix-borders`);
+    die(`未知子命令 "${cmd}"，可用: query / set / batch / anim / diff / create-prefab / extract-prefab / compact-prefab / ensure-meta / build / fix-meta`);
   }
 }
 
