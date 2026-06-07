@@ -488,6 +488,10 @@ function buildToolCtx() {
             cleanDevDir: function () { return exports.methods.cleanDevDir(); },
             getStatus: function () { return exports.methods.getStatus(); },
             reloadPackage: doRestartSelf,
+            fixResetBorders: function (opts) {
+                var mod = require('./cli/src/editor/fix-borders.js');
+                return mod.fixResetBorders(Editor.Project.path, opts || {});
+            },
         },
     };
 }
