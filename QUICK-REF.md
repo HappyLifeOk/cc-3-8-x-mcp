@@ -30,6 +30,8 @@ node extensions/cc-3-8-x-mcp/cli/bin/cocos-mcp-cli.js <command>
 | 看 stub 节点已写入的所有 propertyOverrides | `query <prefab> --selector overrides --id 58` |
 | 比较两个 prefab 字段差异 | `diff <a> <b>` |
 
+> ⚠️ **下方「改 prefab」各表列的是 op 名，不是独立子命令**——统一通过 `batch <prefab> ops.json` 执行（单条改动也要包成 `[{"op":"...",...}]`）。直接 `cli set-sprite-frame ...` 会报「未知子命令」。CLI 真正的子命令只有 `query` / `set`（单字段快捷写入 `set <prefab> <node> <field> <value>`）/ `batch` / `anim` / `diff`。写法见下方 §写 ops.json 速记。
+
 ### 改 prefab — 节点字段
 
 | 场景 | op |
