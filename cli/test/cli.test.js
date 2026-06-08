@@ -190,3 +190,27 @@ test('CLI set active 非法 value: 非零退出', () => {
   const result = run(['set', FIXTURE, 'touchArea', 'active', 'maybe']);
   assert.notEqual(result.status, 0);
 });
+test('CLI open --dry-run: accepts positional project and builds --project command', () => {
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'cocos-open-project-'));
+  fs.mkdirSync(path.join(project, 'assets'));
+
+  const result = run(['open', project, '--cocos', process.execPath, '--dry-run']);
+  assert.equal(result.status, 0, `stderr: ${result.stderr}`);
+  assert.match(result.stdout, /\[dry-run\]/);
+  assert.match(result.stdout, /--project/);
+  assert.match(result.stdout, /--nologin/);
+  assert.match(result.stdout, new RegExp(project.replace(/[\\^$.*+?()[\]{}|]/g, '\\$&')));
+
+  fs.rmSync(project, { recursive: true, force: true });
+});
+
+test('CLI open --with-login: dry-run omits --nologin', () => {
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'cocos-open-project-'));
+  fs.mkdirSync(path.join(project, 'assets'));
+
+  const result = run(['open', '--project', project, '--cocos', process.execPath, '--with-login', '--dry-run']);
+  assert.equal(result.status, 0, `stderr: ${result.stderr}`);
+  assert.doesNotMatch(result.stdout, /--nologin/);
+
+  fs.rmSync(project, { recursive: true, force: true });
+});

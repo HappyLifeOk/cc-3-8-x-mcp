@@ -21,6 +21,7 @@ const { cmdCompactPrefab } = require('./compact-cmd.js');
 const { cmdEnsureMeta } = require('./ensure-meta-cmd.js');
 const { cmdBuild } = require('./build-cmd.js');
 const { cmdFixMeta } = require('./fix-meta-cmd.js');
+const { cmdOpen } = require('./open-cmd.js');
 
 function die(msg) {
   process.stderr.write('Error: ' + msg + '\n');
@@ -56,6 +57,8 @@ function main(argv) {
     cmdEnsureMeta(rest);
   } else if (cmd === 'build') {
     cmdBuild(rest);
+  } else if (cmd === 'open') {
+    cmdOpen(rest);
   } else if (cmd === 'fix-meta') {
     cmdFixMeta(rest);
   } else {

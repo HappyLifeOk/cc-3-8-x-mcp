@@ -15,6 +15,8 @@ Usage:
   cocos-mcp-cli diff  <prefabA> <prefabB>            # 字段级 diff
   cocos-mcp-cli create-prefab <out> [--name X] [--width W] [--height H] [--add-spine <uuid>]
   cocos-mcp-cli extract-prefab <src> <out> --node <selector> [--name X] [--dry-run]
+  cocos-mcp-cli open <project> --version 3.8.8
+  cocos-mcp-cli open --project <project> --cocos <CocosCreator executable>
 
 Commands:
   query           只读查询，输出 JSON

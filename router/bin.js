@@ -121,6 +121,16 @@ async function probeEditor(info) {
     }
 }
 
+async function probeEditorResources(info) {
+    try {
+        var listRes = await httpJsonRpc(info.url, { jsonrpc: '2.0', id: 3, method: 'resources/list' });
+        if (listRes.error) throw new Error(listRes.error.message);
+        return listRes.result.resources || [];
+    } catch (e) {
+        return [];
+    }
+}
+
 /** 去掉 shortName 里的非法字符，MCP tool 名只允许 [a-zA-Z0-9_-] */
 function sanitizeShortName(name) {
     return String(name || 'unknown').replace(/[^a-zA-Z0-9_-]/g, '_');
@@ -136,6 +146,7 @@ async function discover() {
         if (editors.has(key)) continue;  // 已知，不重复 probe
         var tools = await probeEditor(info);
         if (tools == null) continue;
+        var resources = await probeEditorResources(info);
         editors.set(key, {
             baseShortName: sanitizeShortName(info.projectShortName),
             shortName: sanitizeShortName(info.projectShortName),   // dedupeShortNames 会按冲突重设
@@ -143,6 +154,7 @@ async function discover() {
             pid: info.pid,
             url: info.url,
             tools: tools,
+            resources: resources,
             lastProbed: Date.now(),
         });
         logErr('discovered editor', info.projectShortName, 'pid=' + info.pid, info.url, tools.length + ' tools');
@@ -210,6 +222,38 @@ function buildAggregatedToolList() {
     return out;
 }
 
+function encodeRouterResourceUri(ed, uri) {
+    return 'cocos-router://' + ed.shortName + '/' + encodeURIComponent(uri);
+}
+
+function decodeRouterResourceUri(uri) {
+    var m = String(uri || '').match(/^cocos-router:\/\/([^\/]+)\/(.+)$/);
+    if (!m) return null;
+    return { shortName: m[1], uri: decodeURIComponent(m[2]) };
+}
+
+function buildAggregatedResourceList() {
+    var out = [];
+    for (var ed of editors.values()) {
+        (ed.resources || []).forEach(function (r) {
+            out.push({
+                uri: encodeRouterResourceUri(ed, r.uri),
+                name: '[' + ed.shortName + '] ' + (r.name || r.uri),
+                description: r.description || '',
+                mimeType: r.mimeType || 'text/plain',
+            });
+        });
+    }
+    return out;
+}
+
+function findEditorByShortName(shortName) {
+    for (var ed of editors.values()) {
+        if (ed.shortName === shortName) return ed;
+    }
+    return null;
+}
+
 function findEditorByPrefixedTool(prefixedName) {
     for (var ed of editors.values()) {
         var pfx = ed.shortName + '__';
@@ -260,6 +304,7 @@ async function handleMessage(msg) {
                     serverInfo: ROUTER_INFO,
                     capabilities: {
                         tools: { listChanged: true },
+                        resources: {},
                         logging: {},
                     },
                 };
@@ -275,6 +320,13 @@ async function handleMessage(msg) {
             case 'tools/list':
                 await discover();
                 result = { tools: buildAggregatedToolList() };
+                break;
+            case 'resources/list':
+                await discover();
+                result = { resources: buildAggregatedResourceList() };
+                break;
+            case 'resources/read':
+                result = await handleResourceRead(params.uri);
                 break;
             case 'tools/call':
                 result = await handleToolCall(params.name, params.arguments || {});
@@ -337,6 +389,31 @@ async function handleToolCall(name, args) {
 }
 
 // ── 周期性重扫 ──
+async function handleResourceRead(uri) {
+    var decoded = decodeRouterResourceUri(uri);
+    if (!decoded) {
+        return { contents: [{ type: 'text', text: 'unknown router resource uri: ' + uri, mimeType: 'text/plain' }] };
+    }
+    await discover();
+    var ed = findEditorByShortName(decoded.shortName);
+    if (!ed) {
+        return { contents: [{ type: 'text', text: 'editor not found for resource: ' + decoded.shortName, mimeType: 'text/plain' }] };
+    }
+    try {
+        var forward = await httpJsonRpc(ed.url, {
+            jsonrpc: '2.0', id: Date.now(), method: 'resources/read',
+            params: { uri: decoded.uri },
+        });
+        if (forward.error) {
+            return { contents: [{ type: 'text', text: 'editor error: ' + forward.error.message, mimeType: 'text/plain' }] };
+        }
+        return forward.result;
+    } catch (e) {
+        editors.delete(ed.url);
+        return { contents: [{ type: 'text', text: 'forward failed: ' + e.message, mimeType: 'text/plain' }] };
+    }
+}
+
 setInterval(function () { discover().catch(function () {}); }, DISCOVERY_INTERVAL_MS);
 
 // 启动首次发现

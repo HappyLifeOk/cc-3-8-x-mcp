@@ -116,10 +116,11 @@ function defineTools(ctx) {
                 },
             },
             handler: async function (args) {
-                return await msg('asset-db', 'query-assets', {
+                var assets = await msg('asset-db', 'query-assets', {
                     pattern: args.pattern,
                     ccType: args.ccType,
                 });
+                return { assets: assets || [] };
             },
         },
         {
