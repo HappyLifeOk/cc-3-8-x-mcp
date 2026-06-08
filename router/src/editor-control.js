@@ -240,8 +240,15 @@ function resolveExecPathForSpawn(args, projectPath) {
  * 返回的是 launcher pid，不一定等于编辑器主进程最终 pid —— 真实 pid 以 wait_ready
  * 扫注册表拿到的为准，这里的 pid 仅供日志参考。
  */
-function spawnEditor(execPath, projectPath) {
-    var child = cp.spawn(execPath, ['--project', projectPath], {
+function buildEditorSpawnArgs(projectPath, opts) {
+    opts = opts || {};
+    var args = ['--project', projectPath];
+    if (opts.noLogin !== false) args.push('--nologin');
+    return args;
+}
+
+function spawnEditor(execPath, projectPath, opts) {
+    var child = cp.spawn(execPath, buildEditorSpawnArgs(projectPath, opts), {
         detached: true,
         stdio: 'ignore',
     });
@@ -288,20 +295,44 @@ function probeReady(url) {
 
 /**
  * 项目就绪探测：MCP initialize 成功 ≠ 进了项目 —— 实测激进清登录态后 initialize 仍 ready，
- * 但编辑器 UI 卡在登录页。用 asset_query_assets 探 asset-db 是否就绪：项目真打开才加载
- * asset-db、返回非空资源；登录页 / 项目加载中则空或失败。
+ * 但编辑器 UI 卡在登录页。用 asset_query_assets 查 db://assets/* 探 asset-db 是否就绪：
+ * 项目真打开才加载 asset-db、返回非空顶层资源；登录页 / 项目加载中则空或失败。
  * 正向（进项目非空）已实测；负向（登录页态返回啥）按逻辑推断，未在登录页态实测。
  */
 function probeProjectReady(url) {
     return httpMcp(url, 'tools/call', {
-        name: 'asset_query_assets', arguments: { pattern: 'db://assets/**', type: 'scene' },
+        name: 'asset_query_assets', arguments: { pattern: 'db://assets/*' },
     }, 6000).then(function (r) {
-        if (!r || r.error || !r.result || r.result.isError) return false;
-        var txt = r.result.content && r.result.content[0] && r.result.content[0].text;
-        if (!txt) return false;
-        try { var arr = JSON.parse(txt); return Array.isArray(arr) && arr.length > 0; }
-        catch (e) { return false; }
+        return hasReadyAssetResult(r);
     });
+}
+
+function hasReadyAssetResult(r) {
+    if (!r || r.error || !r.result || r.result.isError) return false;
+
+    var content = r.result.content;
+    if (Array.isArray(content)) {
+        if (content.length === 0) return false;
+        if (content[0] && content[0].type === 'text') {
+            return hasReadyAssetText(content[0].text);
+        }
+        return true;
+    }
+
+    if (Array.isArray(r.result)) return r.result.length > 0;
+    return false;
+}
+
+function hasReadyAssetText(txt) {
+    if (!txt) return false;
+    try {
+        var parsed = JSON.parse(txt);
+        if (Array.isArray(parsed)) return parsed.length > 0;
+        if (parsed && Array.isArray(parsed.content)) return parsed.content.length > 0;
+    } catch (e) {
+        return false;
+    }
+    return false;
 }
 
 /**
@@ -340,7 +371,7 @@ async function waitReady(projectPath, opts) {
                         waitedMs: Date.now() - start,
                     };
                 }
-                lastReason = 'MCP up (pid=' + hit.pid + ') 但 asset-db 未就绪 — 疑似卡登录页或项目加载中';
+                lastReason = 'MCP up (pid=' + hit.pid + ') 但 asset-db 未就绪，可能卡在 Cocos Developer Login 或项目加载中';
             } else {
                 lastReason = 'registered (pid=' + hit.pid + ') but MCP server not responding yet';
             }
@@ -350,7 +381,9 @@ async function waitReady(projectPath, opts) {
         await sleep(1000);
     }
     var res = { ready: false, mcpReady: sawMcp, projectReady: false, reason: lastReason, waitedMs: Date.now() - start };
-    if (sawMcp) res.hint = '⚠️ MCP server 起来了但项目没就绪 — 很可能卡在登录页，请手动点 Sign In→skip 进项目后重试';
+    if (sawMcp) {
+        res.hint = '⚠️ MCP server 起来了但项目没就绪。若是 router 拉起/重启编辑器，请确认 spawnArgs 包含 --nologin；若是手动拉起，可能卡在 Cocos Developer Login 或仍在加载项目。';
+    }
     return res;
 }
 
@@ -359,6 +392,7 @@ async function waitReady(projectPath, opts) {
 var COMMON_TARGET_PROPS = {
     shortName: { type: 'string', description: '编辑器短名（工具前缀名，如 my-project）。只有一个编辑器时可省略。' },
     projectPath: { type: 'string', description: '项目绝对路径，定位最精确。编辑器未运行时（restart/wait_ready）必须用它。' },
+    noLogin: { type: 'boolean', description: '拉起/重启编辑器时追加 Cocos 内置 --nologin，默认 true；传 false 禁用。' },
 };
 
 var EDITOR_TOOLS = [
@@ -375,6 +409,7 @@ var EDITOR_TOOLS = [
                 pid: { type: 'number', description: '直接按 pid 定位要重启的编辑器。' },
                 hard: { type: 'boolean', description: 'true=直接 SIGKILL，不给优雅退出窗口。默认 false（先 SIGTERM）。' },
                 timeoutMs: { type: 'number', description: '等新实例就绪的超时（毫秒），默认 90000。' },
+                noLogin: COMMON_TARGET_PROPS.noLogin,
             },
         },
     },
@@ -419,6 +454,7 @@ var EDITOR_TOOLS = [
                 version: { type: 'string', description: 'Cocos 版本号（如 3.8.8），用于拼可执行路径。不传则从注册表借或扫唯一安装。' },
                 execPath: { type: 'string', description: '直接指定可执行路径，优先级最高。' },
                 timeoutMs: { type: 'number', description: '等就绪超时（毫秒），默认 90000。' },
+                noLogin: COMMON_TARGET_PROPS.noLogin,
             },
             required: ['projectPath'],
         },
@@ -450,7 +486,8 @@ async function handleEditorToolCall(name, args) {
         var oldPid = target.pid;
 
         var killRes = await killEditor(oldPid, { hard: args.hard });
-        var launchedPid = spawnEditor(execPath, projectPath);
+        var spawnArgs = buildEditorSpawnArgs(projectPath, { noLogin: args.noLogin });
+        var launchedPid = spawnEditor(execPath, projectPath, { noLogin: args.noLogin });
         var ready = await waitReady(projectPath, { timeoutMs: args.timeoutMs, excludePid: oldPid });
 
         return jsonContent({
@@ -458,6 +495,7 @@ async function handleEditorToolCall(name, args) {
             shortName: sanitize(target.projectShortName),
             projectPath: projectPath,
             execPath: execPath,
+            spawnArgs: spawnArgs,
             oldPid: oldPid,
             launchedPid: launchedPid,
             kill: killRes,
@@ -513,10 +551,11 @@ async function handleEditorToolCall(name, args) {
             });
         }
         var spExec = resolveExecPathForSpawn(args, spProject);
-        var spPid = spawnEditor(spExec, spProject);
+        var spSpawnArgs = buildEditorSpawnArgs(spProject, { noLogin: args.noLogin });
+        var spPid = spawnEditor(spExec, spProject, { noLogin: args.noLogin });
         var spReady = await waitReady(spProject, { timeoutMs: args.timeoutMs });
         return jsonContent({
-            action: 'spawn', execPath: spExec, launchedPid: spPid, ready: spReady,
+            action: 'spawn', execPath: spExec, spawnArgs: spSpawnArgs, launchedPid: spPid, ready: spReady,
         }, !spReady.ready);
     }
 
@@ -533,8 +572,10 @@ module.exports = {
     resolveTarget: resolveTarget,
     resolveExecPath: resolveExecPath,
     resolveExecPathForSpawn: resolveExecPathForSpawn,
+    buildEditorSpawnArgs: buildEditorSpawnArgs,
     waitReady: waitReady,
     probeReady: probeReady,
     probeProjectReady: probeProjectReady,
+    hasReadyAssetResult: hasReadyAssetResult,
     isAlive: isAlive,
 };
