@@ -158,6 +158,7 @@ npx tsc --noEmit
 
 ## 完整文档
 
+- [`AGENTS.md`](./AGENTS.md) — Agent 使用规则：多项目 MCP 绑定、预览 URL、CLI/MCP 分工
 - [`README.md`](./README.md) — MCP 扩展定位 + 架构 + tools 清单
 - [`doc/cli.md`](./doc/cli.md) — **CLI 完整手册**（命令、配方、已知坑、源码导航）
 - [`doc/prefab-schema.md`](./doc/prefab-schema.md) — prefab JSON 结构
