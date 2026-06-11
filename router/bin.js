@@ -156,6 +156,7 @@ async function discover() {
             shortName: sanitizeShortName(info.projectShortName),   // dedupeShortNames 会按冲突重设
             projectPath: info.projectPath,
             pid: info.pid,
+            startedAt: Date.parse(info.startedAt) || 0,   // 同项目双实例时 dedupe 按它选代表
             url: info.url,
             tools: tools,
             resources: resources,
@@ -212,12 +213,30 @@ function notifyToolsChanged() {
  * 冲突的用 projectPath 末段（client / server）加后缀区分，单实例保持原名不变。
  */
 function dedupeShortNames() {
-    var counts = {};
+    // 第一步：同 projectPath 的重复实例是异常态（spawn 竞态留下的双实例），不能进普通撞名改名——
+    // 否则后缀同为路径末段，两个实例都被改名（forest-forest / forest-forest-2），
+    // 没人保住 base 名 → `<base>__*` 前缀路由全部失配（2026-06-11 forest 96802/26426 双实例事故）。
+    // 规则：组内 startedAt 最新的实例代表该项目参与命名，其余改名 `<base>-dup<pid>`，仍可显式触达。
+    var byPath = {};
     for (var ed of editors.values()) {
-        counts[ed.baseShortName] = (counts[ed.baseShortName] || 0) + 1;
+        var k = ed.projectPath || ed.url;
+        (byPath[k] || (byPath[k] = [])).push(ed);
     }
+    var reps = [];
+    Object.keys(byPath).forEach(function (k) {
+        var group = byPath[k].sort(function (a, b) { return (b.startedAt || 0) - (a.startedAt || 0); });
+        reps.push(group[0]);
+        for (var i = 1; i < group.length; i++) {
+            group[i].shortName = group[i].baseShortName + '-dup' + (group[i].pid || i);
+            logErr('duplicate editor on same project', k, 'pid=' + group[i].pid, '→', group[i].shortName);
+        }
+    });
+    // 第二步：代表之间的撞名（不同项目 projectShortName 相同，如 my-app/client 与 my-app/server
+    // 都算成 my-app）按 projectPath 末段加后缀区分，单实例保持原名不变。
+    var counts = {};
+    reps.forEach(function (ed) { counts[ed.baseShortName] = (counts[ed.baseShortName] || 0) + 1; });
     var used = {};
-    for (var ed2 of editors.values()) {
+    reps.forEach(function (ed2) {
         if (counts[ed2.baseShortName] > 1) {
             var suffix = sanitizeShortName(path.basename(ed2.projectPath || 'unknown'));
             var name = ed2.baseShortName + '-' + suffix;
@@ -229,7 +248,7 @@ function dedupeShortNames() {
         } else {
             ed2.shortName = ed2.baseShortName;
         }
-    }
+    });
 }
 
 function buildAggregatedToolList() {
