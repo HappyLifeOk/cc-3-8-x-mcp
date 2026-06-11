@@ -23,6 +23,7 @@ var path = require('path');
 var os = require('os');
 var http = require('http');
 var cp = require('child_process');
+var crypto = require('crypto');
 
 var REGISTRY_DIR = path.join(os.homedir(), '.cocos-mcp', 'editors');
 var STALE_MS = 120 * 1000;          // 与 bin.js 对齐：2 分钟没心跳视为死
@@ -91,6 +92,61 @@ function removeRegistryFile(pid) {
         var f = path.join(REGISTRY_DIR, pid + '.json');
         if (fs.existsSync(f)) fs.unlinkSync(f);
     } catch (e) { /* ignore */ }
+}
+
+// ── 跨进程 spawn 锁 ─────────────────────────────────────────────
+//
+// router 是每个 MCP 客户端（agent 会话）一个 stdio 进程，多 agent 并发 restart/spawn 时
+// 内存互斥无效，必须用注册目录下的 lockfile（wx 原子创建）串行化「kill → spawn → ready」窗口。
+// 没有锁的事故链：新编辑器从 spawn 到写注册文件有几十秒不可见期，第二个 agent 的 restart
+// 在窗口内查不到活跃实例 → 降级 spawn → 同项目双开（Cocos 不支持同项目多开，且两个实例
+// 互抢 guide-editor 8099 / 预览 7456 等端口）。
+// 释放：finally 删文件；持有者进程死亡（agent 会话被杀）后锁可被夺，不设时限强抢——
+// 持有者还活着说明 spawn/ready 仍在进行（默认 waitReady 就有 90s），抢了必双开。
+
+var SPAWN_LOCK_PREFIX = 'spawn-lock-';
+
+function spawnLockPath(projectPath) {
+    // projectPath 整体做 key：不同 worktree 的同名项目路径不同，各锁各的
+    var hash = crypto.createHash('md5').update(String(projectPath)).digest('hex').slice(0, 10);
+    var short = sanitize(path.basename(projectPath || 'unknown'));
+    return path.join(REGISTRY_DIR, SPAWN_LOCK_PREFIX + short + '-' + hash + '.json');
+}
+
+/** 抢锁。成功返回 lockfile 路径；他人持有且进程仍活着时抛错（带持有者信息和处置建议）。 */
+function acquireSpawnLock(projectPath) {
+    var lockPath = spawnLockPath(projectPath);
+    try { fs.mkdirSync(REGISTRY_DIR, { recursive: true }); } catch (e) { /* ignore */ }
+    for (var attempt = 0; attempt < 2; attempt++) {
+        try {
+            fs.writeFileSync(lockPath, JSON.stringify({ pid: process.pid, projectPath: projectPath, at: Date.now() }), { flag: 'wx' });
+            return lockPath;
+        } catch (e) {
+            if (e.code !== 'EEXIST') throw e;
+            var holder = null;
+            try { holder = JSON.parse(fs.readFileSync(lockPath, 'utf-8')); } catch (e2) { /* 坏文件按可夺处理 */ }
+            if (holder && holder.pid === process.pid) return lockPath;   // 本进程已持有
+            if (!holder || !isAlive(holder.pid)) {
+                // 持有者已死（会话被杀没走 finally）→ 夺锁重试一轮
+                try { fs.unlinkSync(lockPath); } catch (e3) { /* 并发夺锁，下轮 wx 见分晓 */ }
+                continue;
+            }
+            var ageSec = holder.at ? Math.round((Date.now() - holder.at) / 1000) : -1;
+            throw new Error(
+                'editor-control: 另一个 agent（router pid=' + holder.pid + '，' + ageSec + 's 前开始）正在 spawn/restart 该项目编辑器：' + projectPath + '\n' +
+                '编辑器从拉起到注册可见需要几十秒，请改用 editor_wait_ready（传 projectPath）等它就绪，不要重复 spawn/restart。'
+            );
+        }
+    }
+    throw new Error('editor-control: spawn 锁竞争失败（连续夺锁未成功）：' + projectPath);
+}
+
+function releaseSpawnLock(projectPath) {
+    var lockPath = spawnLockPath(projectPath);
+    try {
+        var holder = JSON.parse(fs.readFileSync(lockPath, 'utf-8'));
+        if (holder && holder.pid === process.pid) fs.unlinkSync(lockPath);
+    } catch (e) { /* 已被清理 / 本来就不是自己的 */ }
 }
 
 // ── 目标解析 ────────────────────────────────────────────────────
@@ -218,6 +274,70 @@ function execPathFromPs(pid) {
         var idx = out.indexOf(' --');
         return (idx >= 0 ? out.slice(0, idx) : out.split(/\s+/)[0]).trim();
     } catch (e) { return ''; }
+}
+
+/**
+ * 从 OS 进程表找「--project <projectPath>」的 Cocos 主进程 pid（0 = 没有）。
+ * 注册表对「已 spawn 但还没写注册文件」的启动中编辑器是盲区（窗口长达几十秒），
+ * ps 不是 —— spawn 的幂等检查用它兜底，防止对启动中的项目重复 spawn。
+ */
+function findEditorProcessByProject(projectPath) {
+    try {
+        if (process.platform === 'win32') {
+            // TODO[win-verify]: 与 execPathFromPs 同理，Win 待实测；先不做 ps 兜底（仅靠注册表 + 锁）
+            return 0;
+        }
+        var out = cp.execFileSync('ps', ['-axo', 'pid=,command='], { encoding: 'utf-8', maxBuffer: 16 * 1024 * 1024 });
+        var lines = out.split('\n');
+        for (var i = 0; i < lines.length; i++) {
+            var line = lines[i];
+            if (line.indexOf('--project ' + projectPath) < 0) continue;
+            if (/Helper|crashpad/.test(line)) continue;   // Electron helper 子进程不算主进程
+            var m = line.match(/^\s*(\d+)\s/);
+            if (m) return Number(m[1]);
+        }
+    } catch (e) { /* ps 失败时退回注册表判断 */ }
+    return 0;
+}
+
+// ── 调试现场保护 ────────────────────────────────────────────────
+//
+// 痛点：agent 随手 restart/kill 编辑器，把用户（或其他 agent）开着的预览调试现场打断。
+// 信号：预览端口上的 ESTABLISHED 连接 —— 浏览器开着游戏预览页 / guide-live.html（iframe 嵌
+// 预览）都会保持长连接，是「有人正在调试」最直接的证据。有连接且没传 force 就拒绝。
+
+/** 读 <project>/.dev/dev-reload-info.json 拿预览端口，读不到回落 7456 */
+function resolvePreviewPort(projectPath) {
+    try {
+        var info = JSON.parse(fs.readFileSync(path.join(projectPath, '.dev', 'dev-reload-info.json'), 'utf-8'));
+        if (info && info.previewPort) return Number(info.previewPort);
+    } catch (e) { /* 没装 dev-reload 扩展或文件未生成 */ }
+    return 7456;
+}
+
+/** 数编辑器进程预览端口上的 ESTABLISHED 连接数（0 = 没有调试现场）。 */
+function countPreviewConnections(pid, previewPort) {
+    try {
+        if (process.platform === 'win32') {
+            // TODO[win-verify]: Win 没有 lsof，待实测后用 netstat 实现；先不拦
+            return 0;
+        }
+        var out = cp.execFileSync('lsof', ['-nP', '-a', '-p', String(pid), '-iTCP:' + previewPort, '-sTCP:ESTABLISHED'], { encoding: 'utf-8' });
+        return out.split('\n').filter(function (l) { return l.indexOf('ESTABLISHED') >= 0; }).length;
+    } catch (e) { return 0; }   // lsof 无匹配时退出码非 0，按无连接处理
+}
+
+/** restart/kill 前的现场闸门：有活跃预览连接且没传 force 就抛错。 */
+function assertNoDebugSession(action, target, force) {
+    if (force) return;
+    var port = resolvePreviewPort(target.projectPath);
+    var n = countPreviewConnections(target.pid, port);
+    if (n > 0) {
+        throw new Error(
+            action + ': 预览端口 ' + port + ' 上有 ' + n + ' 条活跃连接 —— 用户或其他 agent 正开着游戏预览/引导编辑器调试，现在动编辑器会打断现场。\n' +
+            '请先与用户确认；确认后重试并显式传 force:true。'
+        );
+    }
 }
 
 /**
@@ -473,6 +593,7 @@ var COMMON_TARGET_PROPS = {
     shortName: { type: 'string', description: '编辑器短名（工具前缀名，如 my-project）。只有一个编辑器时可省略。' },
     projectPath: { type: 'string', description: '项目绝对路径，定位最精确。编辑器未运行时（restart/wait_ready）必须用它。' },
     noLogin: { type: 'boolean', description: '拉起/重启编辑器时追加 Cocos 内置 --nologin，默认 true；传 false 禁用。' },
+    force: { type: 'boolean', description: '预览端口有活跃连接（用户/其他 agent 正在调试）时默认拒绝执行；与用户确认后传 true 强制。' },
 };
 
 var EDITOR_TOOLS = [
@@ -480,7 +601,9 @@ var EDITOR_TOOLS = [
         name: 'editor_restart',
         description: '[editor] 重启 Cocos 编辑器进程（kill 旧实例 → 重新拉起 → 等就绪）。' +
             '不需要编辑器在运行也能调（挂 router 进程）。' +
-            '返回 oldPid / launchedPid / kill 结果 / ready 状态（含新 pid·port·url）。',
+            '返回 oldPid / launchedPid / kill 结果 / ready 状态（含新 pid·port·url）。' +
+            '同项目的 restart/spawn 跨 agent 互斥：撞到他人正在重启会报错，此时用 editor_wait_ready 等就绪，勿重试。' +
+            '预览端口有活跃连接（有人正在调试）时默认拒绝，需与用户确认后传 force:true。',
         inputSchema: {
             type: 'object',
             properties: {
@@ -490,6 +613,7 @@ var EDITOR_TOOLS = [
                 hard: { type: 'boolean', description: 'true=直接 SIGKILL，不给优雅退出窗口。默认 false（先 SIGTERM）。' },
                 timeoutMs: { type: 'number', description: '等新实例就绪的超时（毫秒），默认 90000。' },
                 noLogin: COMMON_TARGET_PROPS.noLogin,
+                force: COMMON_TARGET_PROPS.force,
             },
         },
     },
@@ -511,7 +635,8 @@ var EDITOR_TOOLS = [
     {
         name: 'editor_kill',
         description: '[editor] 关闭 Cocos 编辑器进程（SIGTERM，超时升级 SIGKILL，并清理注册文件）。' +
-            '不需要编辑器内 server 配合（挂 router 进程）。',
+            '不需要编辑器内 server 配合（挂 router 进程）。' +
+            '预览端口有活跃连接（有人正在调试）时默认拒绝，需与用户确认后传 force:true。',
         inputSchema: {
             type: 'object',
             properties: {
@@ -520,13 +645,15 @@ var EDITOR_TOOLS = [
                 pid: { type: 'number', description: '直接按 pid 定位。' },
                 hard: { type: 'boolean', description: 'true=直接 SIGKILL。默认 false。' },
                 graceMs: { type: 'number', description: 'SIGTERM 后等待优雅退出的时长（毫秒），默认 6000，超时强杀。' },
+                force: COMMON_TARGET_PROPS.force,
             },
         },
     },
     {
         name: 'editor_spawn',
         description: '[editor] 从零启动一个 Cocos 编辑器（进程完全不在时用，如崩溃后恢复）。' +
-            '同项目已有活跃实例则直接返回不重复开（Cocos 不支持同项目多开）。',
+            '同项目已有活跃/启动中实例则直接返回不重复开（Cocos 不支持同项目多开）；' +
+            '与其他 agent 的 spawn/restart 跨进程互斥，撞锁报错时用 editor_wait_ready 等就绪。',
         inputSchema: {
             type: 'object',
             properties: {
@@ -561,26 +688,36 @@ async function handleEditorToolCall(name, args) {
             if (args.projectPath) return await handleEditorToolCall('editor_spawn', args);
             throw e;
         }
+        assertNoDebugSession('editor_restart', target, args.force);   // 调试现场开着就拒绝，先抛错再抢锁
         var execPath = resolveExecPath(target);     // kill 前解析，此时旧进程还活着，ps 兜底有效
         var projectPath = target.projectPath;
         var oldPid = target.pid;
 
-        var killRes = await killEditor(oldPid, { hard: args.hard });
-        var spawnArgs = buildEditorSpawnArgs(projectPath, { noLogin: args.noLogin });
-        var launchedPid = spawnEditor(execPath, projectPath, { noLogin: args.noLogin });
-        var ready = await waitReady(projectPath, { timeoutMs: args.timeoutMs, excludePid: oldPid });
+        acquireSpawnLock(projectPath);              // 串行化 kill→spawn→ready，防多 agent 并发重启造成双开
+        try {
+            var killRes = await killEditor(oldPid, { hard: args.hard });
+            // 旧进程没死透就拉新实例 = 同项目双开（互抢端口/资源锁），中止
+            if (!killRes.killed && killRes.reason !== 'not running') {
+                throw new Error('editor_restart: 旧编辑器 pid=' + oldPid + ' 在 SIGKILL 后仍存活，中止拉起新实例。请确认该进程状态后重试（必要时手动 kill -9 ' + oldPid + '）。');
+            }
+            var spawnArgs = buildEditorSpawnArgs(projectPath, { noLogin: args.noLogin });
+            var launchedPid = spawnEditor(execPath, projectPath, { noLogin: args.noLogin });
+            var ready = await waitReady(projectPath, { timeoutMs: args.timeoutMs, excludePid: oldPid });
 
-        return jsonContent({
-            action: 'restart',
-            shortName: sanitize(target.projectShortName),
-            projectPath: projectPath,
-            execPath: execPath,
-            spawnArgs: spawnArgs,
-            oldPid: oldPid,
-            launchedPid: launchedPid,
-            kill: killRes,
-            ready: ready,
-        }, !ready.ready);
+            return jsonContent({
+                action: 'restart',
+                shortName: sanitize(target.projectShortName),
+                projectPath: projectPath,
+                execPath: execPath,
+                spawnArgs: spawnArgs,
+                oldPid: oldPid,
+                launchedPid: launchedPid,
+                kill: killRes,
+                ready: ready,
+            }, !ready.ready);
+        } finally {
+            releaseSpawnLock(projectPath);
+        }
     }
 
     if (name === 'editor_wait_ready') {
@@ -605,6 +742,7 @@ async function handleEditorToolCall(name, args) {
 
     if (name === 'editor_kill') {
         var t = resolveTarget(args);
+        assertNoDebugSession('editor_kill', t, args.force);
         var res = await killEditor(t.pid, { hard: args.hard, graceMs: args.graceMs });
         return jsonContent({
             action: 'kill',
@@ -619,24 +757,38 @@ async function handleEditorToolCall(name, args) {
         if (!spProject || !path.isAbsolute(spProject)) {
             throw new Error('editor_spawn: projectPath 必填且必须是绝对路径，收到 ' + JSON.stringify(spProject));
         }
-        // 幂等：同项目已有活跃实例直接返回（Cocos 不支持同项目多开）
-        var spRunning = activeEditors().filter(function (e) { return e.projectPath === spProject; })[0];
-        if (spRunning) {
+        acquireSpawnLock(spProject);                // 与其他 agent 的 spawn/restart 互斥
+        try {
+            // 幂等：同项目已有活跃实例直接返回（Cocos 不支持同项目多开）。
+            // 检查放锁内，避免「对方刚 spawn 还没注册」的窗口里误判为不存在。
+            var spRunning = activeEditors().filter(function (e) { return e.projectPath === spProject; })[0];
+            if (spRunning) {
+                return jsonContent({
+                    action: 'spawn', alreadyRunning: true,
+                    entry: {
+                        shortName: sanitize(spRunning.projectShortName), pid: spRunning.pid,
+                        url: spRunning.url, port: spRunning.port, projectPath: spRunning.projectPath,
+                    },
+                });
+            }
+            // 注册表盲区兜底：已 spawn 但还没写注册文件的启动中实例，从 OS 进程表抓
+            var spStartingPid = findEditorProcessByProject(spProject);
+            if (spStartingPid) {
+                return jsonContent({
+                    action: 'spawn', alreadyStarting: true, pid: spStartingPid,
+                    hint: '检测到同项目编辑器进程（pid=' + spStartingPid + '）正在启动但尚未注册，用 editor_wait_ready（传 projectPath）等它就绪，勿重复 spawn。若它实际卡死，先 editor_kill 该 pid 再 spawn。',
+                });
+            }
+            var spExec = resolveExecPathForSpawn(args, spProject);
+            var spSpawnArgs = buildEditorSpawnArgs(spProject, { noLogin: args.noLogin });
+            var spPid = spawnEditor(spExec, spProject, { noLogin: args.noLogin });
+            var spReady = await waitReady(spProject, { timeoutMs: args.timeoutMs });
             return jsonContent({
-                action: 'spawn', alreadyRunning: true,
-                entry: {
-                    shortName: sanitize(spRunning.projectShortName), pid: spRunning.pid,
-                    url: spRunning.url, port: spRunning.port, projectPath: spRunning.projectPath,
-                },
-            });
+                action: 'spawn', execPath: spExec, spawnArgs: spSpawnArgs, launchedPid: spPid, ready: spReady,
+            }, !spReady.ready);
+        } finally {
+            releaseSpawnLock(spProject);
         }
-        var spExec = resolveExecPathForSpawn(args, spProject);
-        var spSpawnArgs = buildEditorSpawnArgs(spProject, { noLogin: args.noLogin });
-        var spPid = spawnEditor(spExec, spProject, { noLogin: args.noLogin });
-        var spReady = await waitReady(spProject, { timeoutMs: args.timeoutMs });
-        return jsonContent({
-            action: 'spawn', execPath: spExec, spawnArgs: spSpawnArgs, launchedPid: spPid, ready: spReady,
-        }, !spReady.ready);
     }
 
     throw new Error('editor-control: 未知 tool "' + name + '"');
@@ -649,6 +801,13 @@ module.exports = {
     // 导出内部函数供测试 / bin.js 复用
     readRegistryEntries: readRegistryEntries,
     activeEditors: activeEditors,
+    spawnLockPath: spawnLockPath,
+    acquireSpawnLock: acquireSpawnLock,
+    releaseSpawnLock: releaseSpawnLock,
+    findEditorProcessByProject: findEditorProcessByProject,
+    resolvePreviewPort: resolvePreviewPort,
+    countPreviewConnections: countPreviewConnections,
+    assertNoDebugSession: assertNoDebugSession,
     resolveTarget: resolveTarget,
     resolveExecPath: resolveExecPath,
     resolveExecPathForSpawn: resolveExecPathForSpawn,
