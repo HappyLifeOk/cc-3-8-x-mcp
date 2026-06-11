@@ -139,13 +139,17 @@ function sanitizeShortName(name) {
 async function discover() {
     var entries = scanRegistry();
     var seen = new Set();
+    var beforeSig = toolListSignature();   // 改动前的工具签名，末尾比对决定是否通知 claude
     for (var i = 0; i < entries.length; i++) {
         var info = entries[i];
         var key = info.url;
         seen.add(key);
-        if (editors.has(key)) continue;  // 已知，不重复 probe
+        // 已缓存的 editor 也 re-probe：大项目 editor 慢启动（builder worker 没就绪）时，
+        // 首次 probe 只拿到部分/空工具；之后 asset-db 就绪、业务工具全激活，必须重新 probe 刷新，
+        // 否则 claude 永远看不到后激活的工具（如 forest__preview_refresh_and_reload）。
+        var existing = editors.get(key);
         var tools = await probeEditor(info);
-        if (tools == null) continue;
+        if (tools == null) continue;   // probe 失败：保留旧缓存（editor 可能临时忙/重启中），不覆盖
         var resources = await probeEditorResources(info);
         editors.set(key, {
             baseShortName: sanitizeShortName(info.projectShortName),
@@ -157,7 +161,11 @@ async function discover() {
             resources: resources,
             lastProbed: Date.now(),
         });
-        logErr('discovered editor', info.projectShortName, 'pid=' + info.pid, info.url, tools.length + ' tools');
+        if (!existing) {
+            logErr('discovered editor', info.projectShortName, 'pid=' + info.pid, info.url, tools.length + ' tools');
+        } else if (existing.tools.length !== tools.length) {
+            logErr('editor tools updated', info.projectShortName, existing.tools.length + ' → ' + tools.length + ' tools');
+        }
     }
     // 清理已消失的
     for (var key2 of Array.from(editors.keys())) {
@@ -169,6 +177,32 @@ async function discover() {
     }
     // shortName 撞名去重（多编辑器 projectShortName 相同时，否则 tool 前缀冲突会把请求路由到错的编辑器）
     dedupeShortNames();
+    // 工具列表变化（编辑器增减 / 某编辑器工具数从不全变全）→ 通知 claude 重新拉 tools/list。
+    // 否则 claude 停在初次 tools/list 的旧快照：editor 慢启动时初次只暴露 router 自带工具，
+    // 后激活的 forest__ 业务工具 claude 永远拿不到（capabilities.tools.listChanged 声明了但从不真发是历史 bug）。
+    if (toolListSignature() !== beforeSig) {
+        notifyToolsChanged();
+    }
+}
+
+/** 工具列表签名：editors 的 shortName:工具数 排序拼接。变化即代表暴露给 claude 的聚合工具列表变了。 */
+function toolListSignature() {
+    var parts = [];
+    for (var ed of editors.values()) {
+        parts.push(ed.shortName + ':' + ed.tools.length);
+    }
+    parts.sort();
+    return parts.join('|');
+}
+
+/** 标记 claude 已完成 MCP initialize 握手——之前发 list_changed 没意义（client 尚未就绪）。 */
+var clientInitialized = false;
+
+/** 发 MCP notifications/tools/list_changed，让 claude 重新请求 tools/list 拿最新聚合列表。 */
+function notifyToolsChanged() {
+    if (!clientInitialized) return;
+    send({ jsonrpc: '2.0', method: 'notifications/tools/list_changed' });
+    logErr('sent notifications/tools/list_changed (工具列表已变化)');
 }
 
 /**
@@ -311,6 +345,7 @@ async function handleMessage(msg) {
                 break;
             case 'initialized':
             case 'notifications/initialized':
+                clientInitialized = true;   // 握手完成；此后 discover 检测到工具变化才发 list_changed
                 if (id == null) return;
                 result = {};
                 break;
