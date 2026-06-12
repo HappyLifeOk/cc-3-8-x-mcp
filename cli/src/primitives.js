@@ -391,6 +391,22 @@ function makeSpSkeleton(opts) {
   return obj;
 }
 
+/**
+ * 构造 sp.Skeleton.SpineSocket 裸对象。
+ * @param {object} opts
+ * @param {string} opts.path - Spine bone/slot path，例如 root/zk/tou2
+ * @param {number} opts.targetId - 绑定的 cc.Node __id__
+ * @returns {object}
+ */
+function makeSpineSocket(opts) {
+  const { path, targetId } = opts;
+  return {
+    __type__: 'sp.Skeleton.SpineSocket',
+    path,
+    target: ref(targetId),
+  };
+}
+
 // ─────────────────────────────────────────────
 // cc.PrefabInfo / cc.CompPrefabInfo
 // ─────────────────────────────────────────────
@@ -469,6 +485,7 @@ module.exports = {
   makeLabel,
   makeWidget,
   makeSpSkeleton,
+  makeSpineSocket,
   // Prefab 元信息
   makePrefabInfo,
   makeCompPrefabInfo,

@@ -88,6 +88,7 @@ const T = {
   constraintNum: 'number',
   placeholder: 'string',
   string: 'string',
+  path: 'string',
   labelNode: 'string',
   spriteNode: 'string',
   subNode: 'any', // string | string[]
@@ -129,6 +130,7 @@ const SCHEMAS = {
   'set-node-color':          { required: ['node'],                                 optional: ['r', 'g', 'b', 'a'] },
   'replace-nested-prefab':   { required: ['target', 'prefabUuid'],                 optional: ['clearOverrides'] },
   'add-nested-prefab':       { required: ['parent', 'prefabUuid'],                 optional: ['name', 'lpos'] },
+  'add-spine-socket':        { required: ['node', 'path', 'target'],               optional: [] },
   'reset-overrides':         { required: ['node'],                                 optional: ['property', 'componentType', 'subNode', 'all'] },
   // ensure-meta: 给 .ts/.json 文件创建 .meta（v4 uuid），让后续 className → classId 查表能命中
   'ensure-meta':             { required: ['path'],                                 optional: [], typeOverrides: { path: 'string' } },

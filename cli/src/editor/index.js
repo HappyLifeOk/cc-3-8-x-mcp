@@ -45,6 +45,7 @@ const { execSetSprite } = require('./ops/set-sprite.js');
 const { execSetNodeColor } = require('./ops/set-node-color.js');
 const { execReplaceNestedPrefab } = require('./ops/replace-nested-prefab.js');
 const { execAddNestedPrefab } = require('./ops/add-nested-prefab.js');
+const { execAddSpineSocket } = require('./ops/add-spine-socket.js');
 const { execResetOverrides } = require('./ops/reset-overrides.js');
 const { execEnsureMeta } = require('./ops/ensure-meta.js');
 const { execSyncNestedRoots } = require('./ops/sync-nested-roots.js');
@@ -81,6 +82,7 @@ const OP_HANDLERS = {
   'set-node-color': execSetNodeColor,
   'replace-nested-prefab': execReplaceNestedPrefab,
   'add-nested-prefab': execAddNestedPrefab,
+  'add-spine-socket': execAddSpineSocket,
   'reset-overrides': execResetOverrides,
   'ensure-meta': execEnsureMeta,
   'sync-nested-roots': execSyncNestedRoots,

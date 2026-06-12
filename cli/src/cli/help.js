@@ -51,6 +51,7 @@ Supported ops:
   reorder-children                          # 调子节点顺序（影响渲染层级）
   bulk-set                                  # 按 selector（byComponent/byNamePrefix/byNameRegex）一次改一批
   add-node / remove-node / clone-node
+  add-spine-socket                        # 给 sp.Skeleton 增加/更新 socket 绑定
   add-component / set-component-ref         # componentType 支持 @ccclass 名或压缩 classId
                                              # set-component-ref 的 refSubNode 可用字符串数组走多层嵌套 stub
   set-nested-component-field                # 仅 stub 节点（嵌套 prefab）改组件字段

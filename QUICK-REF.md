@@ -70,6 +70,7 @@ node extensions/cc-3-8-x-mcp/cli/bin/cocos-mcp-cli.js <command>
 |---|---|
 | 加节点 | `add-node` |
 | 加嵌套 prefab 实例（stub） | `add-nested-prefab`（parent + prefabUuid + name? + lpos?） |
+| 给 Spine 增加/更新 socket 绑定 | `add-spine-socket`（node + path + target；同 path 幂等更新 target） |
 | 替换嵌套 prefab 的 asset uuid（保留 stub 结构） | `replace-nested-prefab`（target + prefabUuid + clearOverrides?） |
 | 删节点 | `remove-node` |
 | 清悬空嵌套实例根（删了一半的 prefab 残留：父引用没了但根 PrefabInfo 登记还在，残留 asset 仍被加载 → 404）| `sync-nested-roots`（无参，重建根 nestedPrefabInstanceRoots） |
