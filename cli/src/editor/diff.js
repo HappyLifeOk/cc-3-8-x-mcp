@@ -39,6 +39,13 @@ function diffObject(a, b, prefix, out) {
     out[prefix || '<root>'] = [a, b];
     return;
   }
+  // 数组长度不同：整数组替换。按 index 递归会把"数组截断/扩展"误报成
+  // "该位置变 undefined"，JSON 序列化时 undefined → null，看上去像被置空了
+  // 一个 null 槽位（例：[x] → [] 误报成 ".0: [x, null]"）。
+  if (Array.isArray(a) && Array.isArray(b) && a.length !== b.length) {
+    out[prefix || '<root>'] = [a, b];
+    return;
+  }
   const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
   for (const k of keys) {
     const av = a[k];
