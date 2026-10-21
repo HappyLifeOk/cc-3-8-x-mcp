@@ -1882,7 +1882,7 @@ test('FIX-2 addRootTargetOverride: 数组 propertyPath 各索引独立不被幂�
 
   const ovs = rootPI.targetOverrides.map(r => elements[r.__id__]);
   const paths = ovs.map(ov => JSON.stringify(ov.propertyPath));
-  assert.ok(paths.includes(JSON.stringify(['_items', 0])), '应含 ["_items", 0]');
-  assert.ok(paths.includes(JSON.stringify(['_items', 1])), '应含 ["_items", 1]');
-  assert.ok(paths.includes(JSON.stringify(['_items', 2])), '应含 ["_items", 2]');
+  assert.ok(paths.includes(JSON.stringify(['_items', '0'])), '应含 ["_items", "0"]');
+  assert.ok(paths.includes(JSON.stringify(['_items', '1'])), '应含 ["_items", "1"]');
+  assert.ok(paths.includes(JSON.stringify(['_items', '2'])), '应含 ["_items", "2"]');
 });

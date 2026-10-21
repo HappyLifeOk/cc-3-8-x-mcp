@@ -12,7 +12,7 @@
 
 const { parsePrefab } = require('../parse.js');
 const { resolveUuidToPath } = require('../uuid-resolver.js');
-const { findRootPrefabInfo } = require('./helpers.js');
+const { findRootPrefabInfo, getStubOverrideName } = require('./helpers.js');
 
 // ─── 嵌套 prefab：找指定组件的 CompPrefabInfo.fileId ─────────
 
@@ -370,14 +370,15 @@ function resolveLocalIdChain(hostPrefabPath, elements, stubNodeId, compType, sub
   for (let i = 0; i < nEls.length; i++) {
     const el = nEls[i];
     if (!el || el.__type__ !== 'cc.Node') continue;
-    if (el._name !== firstSeg) continue;
+    if ((el._name || getStubOverrideName(nEls, el)) !== firstSeg) continue;
     if (!el._prefab || typeof el._prefab.__id__ !== 'number') continue;
     const innerPi = nEls[el._prefab.__id__];
     if (!innerPi || innerPi.__type__ !== 'cc.PrefabInfo') continue;
     if (!innerPi.instance) continue; // 不是 stub
-    if (typeof innerPi.fileId !== 'string' || innerPi.fileId.length === 0) continue;
+    const innerInstance = nEls[innerPi.instance.__id__];
+    if (!innerInstance || typeof innerInstance.fileId !== 'string' || !innerInstance.fileId) continue;
     innerStubId = i;
-    innerStubFileId = innerPi.fileId;
+    innerStubFileId = innerInstance.fileId;
     break;
   }
   if (innerStubId < 0) {
@@ -416,26 +417,20 @@ function _loadNestedPrefab(hostPrefabPath, elements, stubNodeId) {
 
 // ─── propertyPath 数组索引 normalize ─────────────────────────────────────────
 //
-// Cocos 编辑器加载 prefab 时按 JSON 类型区分属性名（string）与数组索引（number）。
-// 若数组索引以 string 形式写入（如 "0" 代替 0），编辑器无法匹配对应数组槽，
-// TargetOverrideInfo 静默失效（inspector 显示空）。
+// Cocos TargetOverrideInfo.propertyPath 声明为 string[]，数组下标也必须是字符串。
+// 3.8.1 / 3.8.8 的 applyTargetOverrides 会对末段做 falsy 检查；数字 0 会让
+// 整批还原直接 return，导致本项及后续引用全部留空。
 //
 // 使用方法：
 //   addRootTargetOverride 在写入前调用 normalizePropertyPath，
-//   保证任何经由字符串解析（"_items.0"、"_items[0]"）或直接传入的数字 string
-//   都被转换为 number 类型的数组索引。
+//   将经由字符串解析或直接传入的数组下标统一转为 string。
 //
-// 例：["_items", "0"] → ["_items", 0]
-//     ["_items",  0 ] → ["_items", 0]  （已是 number，不变）
+// 例：["_items", "0"] → ["_items", "0"]
+//     ["_items",  0 ] → ["_items", "0"]
 //     ["_role"      ] → ["_role"    ]  （无下标，不变）
 
 function normalizePropertyPath(path) {
-  return path.map(function(seg) {
-    if (typeof seg === 'string' && /^\d+$/.test(seg)) {
-      return parseInt(seg, 10);
-    }
-    return seg;
-  });
+  return path.map(String);
 }
 
 /**
@@ -443,8 +438,7 @@ function normalizePropertyPath(path) {
  * + cc.TargetInfo，实现跨 stub @property 挂载。
  *
  * @param {(string|number)[]} propertyPath  属性路径数组，普通字段如 ["_role"]，
- *   数组字段元素如 ["_items", 0]（索引用数字而非字符串）。
- *   传入字符串形式的数字索引（如 "0"）会被内部自动转为 number，调用方无需预处理。
+ *   数组字段元素如 ["_items", "0"]；传入数字下标时自动转为字符串。
  */
 function addRootTargetOverride(prefabData, rootId, sourceCompId, propertyPath, targetStubId, localIdChain) {
   const { elements } = prefabData;
@@ -453,13 +447,20 @@ function addRootTargetOverride(prefabData, rootId, sourceCompId, propertyPath, t
     throw new Error(`addRootTargetOverride: 找不到主 prefab root PrefabInfo（rootId=${rootId}）`);
   }
 
-  // 确保数组索引为 number 类型（Cocos 编辑器按类型匹配，string "0" ≠ number 0）
+  // 与引擎的 string[] 声明保持一致。
   const normalizedPath = normalizePropertyPath(propertyPath);
 
   // 幂等：已存在同 source/propertyPath/target/localID 的 override 直接返回
   // 注意：dedupe key 使用完整 propertyPath 数组比对，
   // 允许同一字段名但不同索引（如 ["_items",0] vs ["_items",1]）共存。
   const existingRefs = Array.isArray(rootPrefabInfo.targetOverrides) ? rootPrefabInfo.targetOverrides : [];
+  // 同步修正旧工具留下的数字下标，保留 override、targetInfo 和 fileId 的身份。
+  for (const r of existingRefs) {
+    const ov = elements[r.__id__];
+    if (ov && ov.__type__ === 'cc.TargetOverrideInfo' && Array.isArray(ov.propertyPath)) {
+      ov.propertyPath = normalizePropertyPath(ov.propertyPath);
+    }
+  }
   for (const r of existingRefs) {
     if (typeof r.__id__ !== 'number') continue;
     const ov = elements[r.__id__];
