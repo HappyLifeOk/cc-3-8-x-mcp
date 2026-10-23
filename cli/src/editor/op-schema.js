@@ -34,6 +34,8 @@ const T = {
   refSubNode: 'any', // string | string[]
   value: 'any',
   props: 'object',
+  assetMap: 'object',
+  fileIdMap: 'object',
   selector: 'object',
   order: 'array',
   text: 'string',
@@ -100,6 +102,8 @@ const T = {
 // 每个 op 的字段白名单（含必填 + 可选；'op' 隐含必填）
 // typeOverrides：对全局 T 表的字段类型做局部覆盖（同名字段在不同 op 里语义不同时用）
 const SCHEMAS = {
+  'unpack-nested-prefab':    { required: ['node'], optional: [] },
+  'remap-assets':             { required: ['assetMap'], optional: ['fileIdMap'] },
   'set-position':            { required: ['node', 'x', 'y'],                       optional: ['z'] },
   'set-label-text':          { required: ['node', 'text'],                         optional: ['labelNode'] },
   'set-sprite-frame':        { required: ['node', 'uuid'],                         optional: ['spriteNode'] },

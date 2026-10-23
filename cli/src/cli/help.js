@@ -42,6 +42,8 @@ Batch options:
   --dry-run              不写盘，输出会改的字段 diff（{ path: [old, new] } 形式）。
 
 Supported ops:
+  unpack-nested-prefab                       # 解开一层嵌套实例；保留内部子 Prefab、属性与绑定
+  remap-assets                              # assetMap 批量归并 UUID；fileIdMap 迁移 TargetInfo.localID，不改宿主 fileId
   set-position / set-label-text / set-sprite-frame / set-active / rename-node
   set-component-field                       # 普通节点改任意组件任意字段，property 接字符串或嵌套路径数组
   set-component-enabled                     # 改 _enabled

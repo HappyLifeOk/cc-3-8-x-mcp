@@ -50,6 +50,8 @@ const { execAddSpineSocket } = require('./ops/add-spine-socket.js');
 const { execResetOverrides } = require('./ops/reset-overrides.js');
 const { execEnsureMeta } = require('./ops/ensure-meta.js');
 const { execSyncNestedRoots } = require('./ops/sync-nested-roots.js');
+const { execRemapAssets } = require('./ops/remap-assets.js');
+const { execUnpackNestedPrefab } = require('./ops/unpack-nested-prefab.js');
 const { validateOps } = require('./op-schema.js');
 
 const OP_HANDLERS = {
@@ -88,6 +90,8 @@ const OP_HANDLERS = {
   'reset-overrides': execResetOverrides,
   'ensure-meta': execEnsureMeta,
   'sync-nested-roots': execSyncNestedRoots,
+  'remap-assets': execRemapAssets,
+  'unpack-nested-prefab': execUnpackNestedPrefab,
 };
 
 /**
