@@ -16,6 +16,7 @@
 'use strict';
 
 const { resolveNode } = require('../helpers.js');
+const { getStubInnerRootFileId } = require('../../overrides.js');
 const { collectExistingFileIds, uniqueFileId } = require('../id-utils.js');
 
 function execAddNestedPrefab(prefabData, op) {
@@ -49,15 +50,17 @@ function execAddNestedPrefab(prefabData, op) {
   const propertyOverrideRefs = [];
   const overrideElements = [];
 
-  // PropertyOverride 的 targetInfo.localID 用 stub 自己在外层 prefab 内的 PrefabInfo.fileId
-  // （而不是子 prefab 内根节点 fileId）。CC3 协议：targetInfo 定位 override 应用的「目标对象」,
-  // 对于 stub Node 自己的 _name/_lpos 这类字段，目标对象就是 stub 在外层 prefab 内的标识。
+  // 覆盖目标属于子 prefab 的 targetMap，使用其根节点 fileId。
+  // 在修改 elements 前解析，失败时不留下半成品实例。
+  const targetLocalId = name !== undefined || lpos !== undefined
+    ? getStubInnerRootFileId(prefabData, { asset: { __uuid__: cleanUuid } })
+    : null;
   function pushOverride(propertyPath, value) {
     const tiId = nextId++;
     const oiId = nextId++;
     overrideElements.push({
       __type__: 'cc.TargetInfo',
-      localID: [stubFileId],
+      localID: [targetLocalId],
     });
     overrideElements.push({
       __type__: 'CCPropertyOverrideInfo',

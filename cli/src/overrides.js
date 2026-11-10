@@ -71,7 +71,7 @@ function _findStubPrefabInstance(elements, stubId) {
  *
  * @throws 嵌套 prefab UUID 缺失 / 解析失败 / 找不到根节点 fileId 时抛错
  */
-function _getStubInnerRootFileId(prefabData, prefabInfo) {
+function getStubInnerRootFileId(prefabData, prefabInfo) {
   if (!prefabData || !prefabData.resolverStartPath) {
     throw new Error(`setOverrideProperty: prefabData 缺 resolverStartPath，无法解析嵌套 prefab`);
   }
@@ -168,7 +168,7 @@ function setOverrideProperty(prefabData, stubNodeId, propertyPath, value) {
 
   // 嵌套 prefab 内根节点 fileId 是 Cocos 运行时 targetMap 的正确 key（见地雷 3）。
   // 解析失败抛错（不再 fallback），调用方需保证嵌套 prefab 可用。
-  const targetLocalId = _getStubInnerRootFileId(prefabData, prefabInfo);
+  const targetLocalId = getStubInnerRootFileId(prefabData, prefabInfo);
 
   // 查找是否已有对应 override
   // 自动矫正：当 stubFileId !== targetLocalId 时，识别旧版 cli 写入的 stubFileId 条目，
@@ -230,7 +230,7 @@ function listOverrides(prefabData, stubNodeId) {
 
   const { prefabInstance, prefabInfo } = stubResult;
   // stub-node-field override 的 localID 是嵌套 prefab 内根节点 fileId（见地雷 3）。
-  const targetLocalId = _getStubInnerRootFileId(prefabData, prefabInfo);
+  const targetLocalId = getStubInnerRootFileId(prefabData, prefabInfo);
   const result = [];
 
   if (!Array.isArray(prefabInstance.propertyOverrides)) return result;
@@ -305,6 +305,7 @@ function syncNestedPrefabInstanceRoots(prefabData) {
 }
 
 module.exports = {
+  getStubInnerRootFileId,
   setOverrideProperty,
   listOverrides,
   syncNestedPrefabInstanceRoots,
