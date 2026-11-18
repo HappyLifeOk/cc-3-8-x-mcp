@@ -1,6 +1,6 @@
 # cc-3-8-x-mcp
 
-Cocos Creator 3.8.x 专用的 Editor Bridge 扩展 + 离线 prefab 读写 CLI。
+Cocos Creator 3.8.x 专用的项目 Editor Bridge。
 
 把编辑器的 scene/asset/preview/local 能力通过本机私有 Bridge 交给全局
 `cocos-mcp-gateway`；同时提供无需编辑器运行的 offline prefab 编辑能力。
@@ -52,11 +52,11 @@ Codex / Claude Code / 其他 stdio MCP client
 项目内 cc-3-8-x-mcp             ← 在 Cocos Creator 3.8.x 进程内跑轻量 Editor Bridge
 ```
 
-职责边界：项目扩展只负责 `Editor.Message` 能力、Bridge 和 CLI；全局
+职责边界：项目扩展负责 `Editor.Message` 能力和 Bridge。全局
 `cocos-mcp-gateway` 独占 MCP 协议、客户端注册、实例发现与多项目路由。
 `universal-mcp-sdk` 已从项目扩展运行链路移除。
 
-offline prefab tools（`prefab_query` / `prefab_edit` / `prefab_batch`）在 Gateway 进程内直接执行，调用 `cli/src/index.js`，不需要编辑器运行。
+offline prefab tools（`prefab_query` / `prefab_edit` / `prefab_batch`）在 Gateway 进程内直接执行，调用 `runtime/cli/src/index.js`，不需要编辑器运行。
 
 ## 3.0 架构升级
 
@@ -66,7 +66,7 @@ offline prefab tools（`prefab_query` / `prefab_edit` / `prefab_batch`）在 Gat
 | 对比项 | 旧版 | 3.0 |
 |---|---|---|
 | 客户端连接 | 客户端或全局 router 连接项目 `/mcp` | 客户端只连接全局 `cocos-mcp-gateway` |
-| 扩展职责 | 项目级 MCP Server + Editor.Message + CLI | 私有 Editor Bridge + Editor.Message + CLI |
+| 扩展职责 | 项目级 MCP Server + Editor.Message + CLI | 私有 Editor Bridge + Editor.Message |
 | MCP 协议 | 每个项目扩展都解析一遍 | 只由 Gateway 处理 |
 | 共享 SDK | 项目内带 `universal-mcp-sdk` 子库 | 已移除 |
 | Bridge 访问 | 项目 HTTP MCP endpoint 可被直接配置 | 仅允许 Gateway 通过 loopback 和随机 token 调用 |
@@ -115,9 +115,9 @@ another__asset_query_assets    →  another 编辑器的 Editor Bridge
 prefab_query                   →  Gateway 本地执行（cli），无需编辑器
 ```
 
-### 3. cocos-mcp-cli（`cli/`）
+### 3. 全局 cocos-mcp-cli
 
-零依赖 Node CLI，直接读写 `.prefab` 文件，无需 Cocos 编辑器运行。详见 [`doc/cli.md`](./doc/cli.md)。
+从 Gateway 安装，离线读写 Prefab、动画和图片 `.meta`。修复图片元数据可用 `cocos-mcp-cli fix-meta --project <项目路径> --dry-run`。详见 [`doc/cli.md`](./doc/cli.md)。
 
 ---
 

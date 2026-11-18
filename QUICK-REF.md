@@ -5,7 +5,7 @@
 ## 入口（在 `forest/` 项目根执行）
 
 ```bash
-node extensions/cc-3-8-x-mcp/cli/bin/cocos-mcp-cli.js <command>
+cocos-mcp-cli <command>
 ```
 
 ## 节点定位三种形式（`node` / `parent` / `target` / `source` / `refNode` 通用）
@@ -145,15 +145,15 @@ node extensions/cc-3-8-x-mcp/cli/bin/cocos-mcp-cli.js <command>
 
 ```bash
 # 1. 看节点树拿 id
-node extensions/cc-3-8-x-mcp/cli/bin/cocos-mcp-cli.js query <prefab> --selector tree
+cocos-mcp-cli query <prefab> --selector tree
 
 # 2. 写 /tmp/ops.json
 
 # 3. 干跑预览
-node extensions/cc-3-8-x-mcp/cli/bin/cocos-mcp-cli.js batch <prefab> /tmp/ops.json --dry-run
+cocos-mcp-cli batch <prefab> /tmp/ops.json --dry-run
 
 # 4. 落盘
-node extensions/cc-3-8-x-mcp/cli/bin/cocos-mcp-cli.js batch <prefab> /tmp/ops.json
+cocos-mcp-cli batch <prefab> /tmp/ops.json
 
 # 5. 类型检查
 npx tsc --noEmit

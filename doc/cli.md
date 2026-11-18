@@ -33,9 +33,9 @@ prefab 是 JSON 数组，`__id__` 是数组下标，字符串替换会破坏所�
 ## 2. 入口与路径约定
 
 ```bash
-# 必须用 bin/cocos-mcp-cli.js（src/index.js 是 re-export 无 CLI 入口；src/cli/main.js 不自调用）
+# 使用随 Gateway 安装的全局命令
 cd <你的 Cocos 项目根目录>
-node extensions/cc-3-8-x-mcp/cli/bin/cocos-mcp-cli.js <command> [args]
+cocos-mcp-cli <command> [args]
 ```
 
 prefab 路径相对 `forest/` 项目根，不带 `forest/` 前缀：
@@ -45,13 +45,8 @@ assets/packages/common/setting/ui/SettingUI.prefab
 assets/packages/module/sign/prefab/SignUI.prefab
 ```
 
-零依赖，无需 `npm install`。可选全局链接：
+从 Gateway 安装或链接全局命令。项目中的 Editor Bridge 负责资源重导和预览刷新。
 
-```bash
-cd extensions/cc-3-8-x-mcp/cli
-npm link
-cocos-mcp-cli <command>
-```
 
 ---
 
@@ -59,15 +54,15 @@ cocos-mcp-cli <command>
 
 ```bash
 # 1. 查节点树，确认目标 ID 和 isStub 信息
-node bin/cocos-mcp-cli.js query <prefab> --selector tree
+cocos-mcp-cli query <prefab> --selector tree
 
 # 2. 写 ops.json（见 §6 Op 全表）
 
 # 3. 干跑预览改动（不写盘）
-node bin/cocos-mcp-cli.js batch <prefab> ops.json --dry-run
+cocos-mcp-cli batch <prefab> ops.json --dry-run
 
 # 4. 落盘
-node bin/cocos-mcp-cli.js batch <prefab> ops.json
+cocos-mcp-cli batch <prefab> ops.json
 
 # 5. 类型检查
 npx tsc --noEmit
@@ -129,7 +124,7 @@ cocos-mcp-cli compact-prefab <prefab> [--dry-run]
 
 ```bash
 # glob 示例
-node bin/cocos-mcp-cli.js batch /tmp/ops.json \
+cocos-mcp-cli batch /tmp/ops.json \
   --glob "assets/packages/module/**/ui/*.prefab" --dry-run
 ```
 
@@ -138,8 +133,8 @@ node bin/cocos-mcp-cli.js batch /tmp/ops.json \
 `.anim` 与 `.prefab` 同为 JSON 数组 + `__id__` 引用格式，复用 `editPrefab`。op 主要面向 cc.Node 树。改 AnimationClip / Track / Curve 结构请用 `cli/src/anim-primitives.js` 在脚本中处理。
 
 ```bash
-node bin/cocos-mcp-cli.js anim query my.anim --selector tree
-node bin/cocos-mcp-cli.js anim batch my.anim ops.json --dry-run
+cocos-mcp-cli anim query my.anim --selector tree
+cocos-mcp-cli anim batch my.anim ops.json --dry-run
 ```
 
 ### diff
@@ -147,7 +142,7 @@ node bin/cocos-mcp-cli.js anim batch my.anim ops.json --dry-run
 字段级 diff，输出与 dry-run 同格式：
 
 ```bash
-node bin/cocos-mcp-cli.js diff old.prefab new.prefab
+cocos-mcp-cli diff old.prefab new.prefab
 ```
 
 适用：CI 验证转换工具产物 / 对照历史版本 / review 自动 diff。
@@ -196,7 +191,7 @@ node bin/cocos-mcp-cli.js diff old.prefab new.prefab
 for meta in assets/res/<group>/<xxxN>/*.skel.meta; do
   name=$(basename "$meta" .skel.meta)
   uuid=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['uuid'])" "$meta")
-  node extensions/cc-3-8-x-mcp/cli/bin/cocos-mcp-cli.js create-prefab \
+  cocos-mcp-cli create-prefab \
     "assets/packages/<group>/<xxxN>/prefab/${name}.prefab" \
     --add-spine "$uuid"
 done
@@ -232,7 +227,7 @@ done
 
 例：从 HomeBottom 提取 btnTask 为独立 BottomEntry.prefab
 ```bash
-node extensions/cc-3-8-x-mcp/cli/bin/cocos-mcp-cli.js \
+cocos-mcp-cli \
   extract-prefab \
   assets/packages/.../HomeBottom.prefab \
   assets/packages/module/task/prefab/BottomEntry.prefab \
@@ -267,13 +262,13 @@ node extensions/cc-3-8-x-mcp/cli/bin/cocos-mcp-cli.js \
 
 例：清两个历史 null prefab
 ```bash
-node extensions/cc-3-8-x-mcp/cli/bin/cocos-mcp-cli.js compact-prefab \
+cocos-mcp-cli compact-prefab \
   assets/packages/module/task/prefab/TaskRewardItem.prefab --dry-run
 # 输出: 29 → 27 (清掉 2 个 null)
 
 # 批量扫整个项目（shell 循环 + dry-run）
 for f in $(find assets -name "*.prefab"); do
-  node extensions/cc-3-8-x-mcp/cli/bin/cocos-mcp-cli.js compact-prefab "$f" --dry-run 2>&1 | grep -v "无 null"
+  cocos-mcp-cli compact-prefab "$f" --dry-run 2>&1 | grep -v "无 null"
 done
 ```
 
@@ -364,6 +359,21 @@ stub 节点（嵌套 prefab 实例）在 prefab JSON 里 `_name = ""`（空字�
 | `remove-node` | `target` / `node` | 从父节点移除引用；元素本身保留（orphan），保持其他 `__id__` 稳定。`node` 是旧文档兼容字段，推荐新脚本用 `target` |
 | `sync-nested-roots` | (无) | 重建根 `PrefabInfo.nestedPrefabInstanceRoots`，剔除「删了一半」残留的悬空嵌套实例根（节点 `_parent` 已移除但根登记残留 → 残留嵌套 prefab 的 asset 仍被当依赖加载，运行时 404）。只重写该数组，不删 elements、不动其他 `__id__`、不产生 null 槽；被孤立的残留对象成为不可达 orphan。复用 remove-node 内部同名逻辑 |
 | `clone-node` | `source`, `parent`, `name` | 深拷贝整棵子树，分配新 `__id__` + 新 fileId |
+
+#### 批量迁移资源引用
+
+`remap-assets` 是 `batch` 操作。传入 `assetMap` 指定 UUID 替换关系，可选的 `fileIdMap` 会在当前文件内替换匹配的 `TargetInfo.localID`。
+宿主节点与实例的 fileId 保持原值。先用 `--dry-run` 核对替换范围。
+
+#### 解包一层嵌套 Prefab
+
+```json
+[{ "op": "unpack-nested-prefab", "node": { "path": "Window/panel" } }]
+```
+
+原实例变为当前 Prefab 内的节点，保留宿主节点的槽位、fileId、挂载组件和属性覆盖。普通节点上的挂载组件转成节点自身的组件。仍在子 Prefab 内的挂载和引用迁到相应的实例路径，内部的独立 Prefab 保持嵌套。
+
+`node` 只接受有父节点的嵌套实例。含挂载子节点或删除组件覆盖的实例、Prefab 变体以及同一作用域发生 fileId 冲突的情况会报错，batch 保持原文件。操作范围是传入的宿主 Prefab。
 
 #### add-node 的 node 字段
 
@@ -566,7 +576,7 @@ stub 节点（嵌套 prefab 实例）在 prefab JSON 里 `_name = ""`（空字�
 ### 7.11 dry-run 预览
 
 ```bash
-node bin/cocos-mcp-cli.js batch <prefab> ops.json --dry-run
+cocos-mcp-cli batch <prefab> ops.json --dry-run
 ```
 
 输出：
@@ -591,7 +601,7 @@ node bin/cocos-mcp-cli.js batch <prefab> ops.json --dry-run
 ### 7.12 query 单字段值（脚本管道）
 
 ```bash
-node bin/cocos-mcp-cli.js query <prefab> --selector field \
+cocos-mcp-cli query <prefab> --selector field \
   --name itemList --comp cc.UITransform --field _anchorPoint
 # → {"__type__": "cc.Vec2", "x": 0.5, "y": 1}
 ```
@@ -599,7 +609,7 @@ node bin/cocos-mcp-cli.js query <prefab> --selector field \
 ### 7.13 query 树带组件字段
 
 ```bash
-node bin/cocos-mcp-cli.js query <prefab> --selector tree --with-comps
+cocos-mcp-cli query <prefab> --selector tree --with-comps
 ```
 
 每个节点附 `components: [{type, id, fields}]`，`fields` 过滤掉系统字段（`__type__` / `node` / `_enabled` / `__prefab` 等）后的业务字段。
@@ -746,7 +756,7 @@ jq '[.[] | select(.__type__ == "cc.TargetOverrideInfo")] | length' \
 ## 11. 源码导航
 
 ```
-extensions/cc-3-8-x-mcp/cli/
+cocos-mcp-gateway/runtime/cli/
 ├── bin/cocos-mcp-cli.js        # CLI 入口（require src/cli/main.js）
 └── src/
     ├── index.js                 # 公开 API re-export（parsePrefab / writePrefab / editPrefab / queryPrefab / ...）
@@ -789,9 +799,4 @@ extensions/cc-3-8-x-mcp/cli/
 
 ### 测试
 
-```bash
-# 6 个测试文件 116 个用例
-for f in extensions/cc-3-8-x-mcp/cli/test/*.test.js; do
-  node --test "$f" 2>&1 | grep -E "^# (pass|fail)"
-done
-```
+在 Gateway 仓库运行 `npm test`，在扩展源码仓库运行 `node --test cli/test/*.test.js`。

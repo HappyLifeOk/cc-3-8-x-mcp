@@ -15,6 +15,10 @@ Usage:
   cocos-mcp-cli diff  <prefabA> <prefabB>            # 字段级 diff
   cocos-mcp-cli create-prefab <out> [--name X] [--width W] [--height H] [--add-spine <uuid>]
   cocos-mcp-cli extract-prefab <src> <out> --node <selector> [--name X] [--dry-run]
+  cocos-mcp-cli compact-prefab <prefab> [--dry-run]
+  cocos-mcp-cli ensure-meta <file> [--dry-run]
+  cocos-mcp-cli fix-meta [--project <dir>] [--dry-run]
+  cocos-mcp-cli build --help
   cocos-mcp-cli open <project> --version 3.8.8
   cocos-mcp-cli open --project <project> --cocos <CocosCreator executable>
 
@@ -27,6 +31,11 @@ Commands:
   create-prefab   创建空白 prefab（root + UITransform，可选 sp.Skeleton）
   extract-prefab  把 src 中的某个子节点闭包提取为独立 prefab（含组件 / PrefabInfo /
                   嵌套 PrefabInstance / overrides 的全部 __id__ 引用）
+  compact-prefab  清理预制体中的空槽并重排 __id__ 引用
+  ensure-meta     给缺少 .meta 的脚本或 JSON 生成元数据
+  fix-meta        检查并修复图片 .meta 的已知异常
+  build           通过 Creator 可执行文件进行命令行构建
+  open            启动指定项目的 Creator 编辑器
 
 Query options:
   --selector tree   节点树（默认）
@@ -42,7 +51,7 @@ Batch options:
   --dry-run              不写盘，输出会改的字段 diff（{ path: [old, new] } 形式）。
 
 Supported ops:
-  unpack-nested-prefab                       # 解开一层嵌套实例；保留内部子 Prefab、属性与绑定
+  unpack-nested-prefab                       # 解开一层嵌套实例，保留挂载组件、属性覆盖和跨层引用
   remap-assets                              # assetMap 批量归并 UUID；fileIdMap 迁移 TargetInfo.localID，不改宿主 fileId
   set-position / set-label-text / set-sprite-frame / set-active / rename-node
   set-component-field                       # 普通节点改任意组件任意字段，property 接字符串或嵌套路径数组

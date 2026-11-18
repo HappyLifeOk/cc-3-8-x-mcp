@@ -527,10 +527,6 @@ function buildToolCtx() {
             cleanDevDir: function () { return exports.methods.cleanDevDir(); },
             getStatus: function () { return exports.methods.getStatus(); },
             reloadPackage: doRestartSelf,
-            fixMeta: function (opts) {
-                var mod = require('./cli/src/editor/fix-meta.js');
-                return mod.fixMeta(Editor.Project.path, opts || {});
-            },
         },
     };
 }

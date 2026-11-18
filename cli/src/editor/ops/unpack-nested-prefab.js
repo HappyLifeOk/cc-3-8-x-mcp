@@ -1,75 +1,101 @@
-// 解开一层嵌套实例，保留其内部独立子 Prefab 及跨 Prefab 引用。
-// 暂不支持增删组件/子节点的实例和跨多层的宿主 override；遇到这些情况先拒绝。
+// 解开一层嵌套实例，把挂载组件及引用迁到解包后的作用域。
 'use strict';
 
 const { parsePrefab } = require('../../parse.js');
 const { resolveUuidToPath } = require('../../uuid-resolver.js');
-const { isStub, resolveNode } = require('../helpers.js');
-const { collectExistingFileIds, syncNestedRoots } = require('../id-utils.js');
+const { findRootPrefabInfo, isStub, resolveNode } = require('../helpers.js');
+const { syncNestedRoots } = require('../id-utils.js');
 
 function fail(message) { throw new Error(`editPrefab [unpack-nested-prefab]: ${message}`); }
-function setField(object, parts, value) {
-  if (!Array.isArray(parts) || !parts.length || parts.some(k => ['__proto__', 'prototype', 'constructor'].includes(k))) fail('无效 propertyPath');
-  for (let i = 0; i < parts.length - 1; i++) {
-    if (!object[parts[i]] || typeof object[parts[i]] !== 'object') fail('propertyPath 中间字段不存在');
-    object = object[parts[i]];
-  }
-  object[parts[parts.length - 1]] = value;
+
+function deref(elements, value) {
+  return Number.isInteger(value?.__id__) ? elements[value.__id__] : value;
 }
 
-function execUnpackNestedPrefab(prefabData, op) {
-  const { elements, rootId } = prefabData;
-  const { node, nodeId } = resolveNode(prefabData, op.node, 'unpack-nested-prefab');
-  if (!isStub(elements, node) || !node._parent) fail('目标必须是有父节点的嵌套 Prefab');
-  const piId = node._prefab.__id__, pi = elements[piId], instance = elements[pi.instance?.__id__];
-  if (!instance) fail('缺少 PrefabInstance');
-  for (const field of ['mountedChildren', 'mountedComponents', 'removedComponents']) {
-    if (instance[field]?.length) fail(`暂不支持 ${field}`);
-  }
-  const source = parsePrefab(resolveUuidToPath(pi.asset.__uuid__, prefabData.resolverStartPath));
-  const src = source.elements, srcRoot = src[source.rootId], srcPiId = srcRoot._prefab?.__id__, srcPi = src[srcPiId];
-  if (isStub(src, srcRoot) || !srcPi || srcPi.instance) fail('暂不支持 Prefab 变体');
+function append(elements, value) {
+  const ref = { __id__: elements.length };
+  elements.push(value);
+  return ref;
+}
 
-  // 只在当前 Prefab 的作用域解析 fileId，内层实例的相同 fileId 不参与匹配。
-  const byFileId = new Map();
-  for (let i = 0; i < src.length; i++) {
-    const item = src[i];
-    const info = src[item?._prefab?.__id__ ?? item?.__prefab?.__id__];
-    if (!info?.fileId || (info.root && info.root.__id__ !== source.rootId)) continue;
-    if (byFileId.has(info.fileId)) fail(`源文件中有歧义 fileId: ${info.fileId}`);
-    byFileId.set(info.fileId, i);
+function setField(object, path, value) {
+  for (const key of path.slice(0, -1)) {
+    if (!object[key] || typeof object[key] !== 'object') fail('propertyPath 中间字段不存在');
+    object = object[key];
   }
-  function resolveDirect(info) {
-    const chain = info?.localID;
-    if (!Array.isArray(chain) || chain.length !== 1 || !byFileId.has(chain[0])) fail('暂不支持宿主跨多层 override 或目标不存在');
-    return byFileId.get(chain[0]);
-  }
-  const properties = (instance.propertyOverrides || []).map(ref => {
-    const override = elements[ref.__id__];
-    const id = resolveDirect(elements[override?.targetInfo?.__id__]);
-    if (['_children', '_components', '_prefab', '__prefab', '__type__', '_parent'].includes(override.propertyPath?.[0])) fail('不支持结构字段 override');
-    return { id, path: override.propertyPath, value: override.value };
-  });
-  const hostPi = elements[elements[rootId]._prefab.__id__];
-  const bindings = [];
-  for (const ref of hostPi.targetOverrides || []) {
-    const binding = elements[ref.__id__];
-    if (binding?.source?.__id__ === nodeId) fail('暂不支持以待解开实例为 source 的 override');
-    if (binding?.target?.__id__ !== nodeId) continue;
-    if (binding.sourceInfo || !elements[binding.source?.__id__]) fail('暂不支持嵌套 sourceInfo');
-    bindings.push({ ref, binding, id: resolveDirect(elements[binding.targetInfo?.__id__]) });
-  }
+  object[path[path.length - 1]] = value;
+}
 
-  // 保留宿主节点和 PrefabInfo 的槽位与 fileId，其余身份没有冲突时原样保留。
-  const existing = collectExistingFileIds(elements);
+function validatePath(path) {
+  if (!Array.isArray(path) || !path.length || path.some(key =>
+    (typeof key !== 'string' && !Number.isInteger(key)) || ['__proto__', 'prototype', 'constructor'].includes(key))) {
+    fail('无效 propertyPath');
+  }
+}
+
+function indexScope(elements, rootId, skipId) {
+  const scope = new Map();
+  const visited = new Set();
+  function add(fileId, id, nested = false) {
+    if (!fileId) return;
+    if (scope.has(fileId)) fail(`同一作用域内 fileId 重复: ${fileId}`);
+    scope.set(fileId, { id, nested });
+  }
+  function visit(id) {
+    if (id === skipId) return;
+    const node = elements[id];
+    if (node?.__type__ !== 'cc.Node' || visited.has(id)) fail('无效的 Prefab 节点层级');
+    visited.add(id);
+    const info = deref(elements, node._prefab);
+    if (isStub(elements, node)) {
+      const instanceId = deref(elements, info.instance).fileId;
+      if (!instanceId) fail('内层 Prefab 缺少实例 fileId');
+      add(instanceId, id, true);
+      return;
+    }
+    add(info?.fileId, id);
+    for (const ref of node._components || []) {
+      add(deref(elements, deref(elements, ref)?.__prefab)?.fileId, ref.__id__);
+    }
+    for (const ref of node._children || []) visit(ref.__id__);
+  }
+  visit(rootId);
+  return scope;
+}
+
+function localId(elements, ref) {
+  const chain = deref(elements, ref)?.localID;
+  if (!Array.isArray(chain) || !chain.length || chain.some(id => typeof id !== 'string' || !id)) {
+    fail('无效的 TargetInfo.localID');
+  }
+  return chain;
+}
+
+function instanceAt(elements, nodeId) {
+  const info = deref(elements, elements[nodeId]?._prefab);
+  const instance = deref(elements, info?.instance);
+  if (instance?.__type__ !== 'cc.PrefabInstance') fail('目标缺少 PrefabInstance');
+  return instance;
+}
+
+function appendPropertyOverride(elements, address, path, value) {
+  const instance = instanceAt(elements, address.id);
+  instance.propertyOverrides ??= [];
+  instance.propertyOverrides.push(append(elements, {
+    __type__: 'CCPropertyOverrideInfo',
+    targetInfo: append(elements, { __type__: 'cc.TargetInfo', localID: address.chain }),
+    propertyPath: path,
+    value,
+  }));
+}
+
+function copyTemplate(elements, rootId, nodeId, infoId, source) {
+  const { elements: src, rootId: sourceRootId } = source;
+  const sourceInfoId = src[sourceRootId]._prefab.__id__;
+  const map = new Map([[0, 0], [sourceRootId, nodeId], [sourceInfoId, infoId]]);
   for (let i = 1; i < src.length; i++) {
-    const item = src[i];
-    if (i === srcPiId || !item?.fileId) continue;
-    if (existing.has(item.fileId)) fail(`fileId 与宿主冲突: ${item.fileId}`);
-    existing.add(item.fileId);
+    if (!map.has(i)) map.set(i, append(elements, null).__id__);
   }
-  const map = new Map([[0, 0], [source.rootId, nodeId], [srcPiId, piId]]);
-  for (let i = 1; i < src.length; i++) if (!map.has(i)) { map.set(i, elements.length); elements.push(null); }
   function clone(value) {
     if (!value || typeof value !== 'object') return value;
     if (Array.isArray(value)) return value.map(clone);
@@ -77,9 +103,7 @@ function execUnpackNestedPrefab(prefabData, op) {
       if (!map.has(value.__id__)) fail(`源引用越界: ${value.__id__}`);
       return { ...value, __id__: map.get(value.__id__) };
     }
-    const copy = {};
-    for (const key of Object.keys(value)) copy[key] = clone(value[key]);
-    return copy;
+    return Object.fromEntries(Object.entries(value).map(([key, field]) => [key, clone(field)]));
   }
   for (let i = 1; i < src.length; i++) {
     const copy = clone(src[i]);
@@ -88,20 +112,149 @@ function execUnpackNestedPrefab(prefabData, op) {
       copy.asset = { __id__: 0 };
       copy.nestedPrefabInstanceRoots = null;
     }
-    if (copy?.__type__ === 'cc.PrefabInstance' && copy.prefabRootNode?.__id__ === nodeId) copy.prefabRootNode = { __id__: rootId };
+    if (copy?.__type__ === 'cc.PrefabInstance' && copy.prefabRootNode?.__id__ === nodeId) {
+      copy.prefabRootNode = { __id__: rootId };
+    }
     elements[map.get(i)] = copy;
   }
-  elements[nodeId]._parent = node._parent;
-  elements[piId].fileId = pi.fileId;
-  elements[piId].instance = null;
-  const importedBindings = elements[piId].targetOverrides || [];
-  elements[piId].targetOverrides = null;
-  for (const property of properties) setField(elements[map.get(property.id)], property.path, property.value);
-  for (const { binding, id } of bindings) {
-    setField(elements[binding.source.__id__], binding.propertyPath, { __id__: map.get(id) });
-    binding.source = null; binding.target = null; binding.targetInfo = null;
+  return map;
+}
+
+function rebindOverrides(elements, hostInfo, outerId, resolveAddress, inheritedRefs) {
+  const kept = [];
+  function readAddress(id, info) {
+    if (id === outerId && info) return resolveAddress(info);
+    return { id, chain: info ? localId(elements, info) : undefined };
   }
-  hostPi.targetOverrides = (hostPi.targetOverrides || []).filter(ref => !bindings.some(b => b.ref.__id__ === ref.__id__)).concat(importedBindings);
+  function keep(ref, source, path) {
+    kept.push({ ref, key: JSON.stringify([source.id, source.chain, path]) });
+  }
+  for (const ref of inheritedRefs) {
+    const row = deref(elements, ref);
+    keep(ref, { id: row.source.__id__, chain: row.sourceInfo ? localId(elements, row.sourceInfo) : undefined }, row.propertyPath);
+  }
+  for (const ref of hostInfo.targetOverrides || []) {
+    const row = deref(elements, ref);
+    if (!row?.source || !row.target) {
+      kept.push({ ref });
+      continue;
+    }
+    const source = readAddress(row.source.__id__, row.sourceInfo);
+    const path = row.propertyPath;
+    if (row.source.__id__ !== outerId && row.target.__id__ !== outerId) {
+      keep(ref, source, path);
+      continue;
+    }
+    validatePath(path);
+    const target = readAddress(row.target.__id__, row.targetInfo);
+    if (target.chain) {
+      row.source = { __id__: source.id };
+      row.sourceInfo = source.chain ? append(elements, { __type__: 'cc.TargetInfo', localID: source.chain }) : null;
+      row.target = { __id__: target.id };
+      row.targetInfo = append(elements, { __type__: 'cc.TargetInfo', localID: target.chain });
+      keep(ref, source, path);
+      continue;
+    }
+
+    // 目标已内联。旧引用如果留在 targetOverrides，Creator 会试图从一个不存在的实例解析。
+    const targetRef = { __id__: target.id };
+    if (!source.chain && isStub(elements, elements[source.id])) {
+      source.chain = [deref(elements, elements[source.id]._prefab).fileId];
+    }
+    if (source.chain) appendPropertyOverride(elements, source, path, targetRef);
+    else setField(elements[source.id], path, targetRef);
+    const key = JSON.stringify([source.id, source.chain, path]);
+    for (let i = kept.length - 1; i >= 0; i--) {
+      if (kept[i].key === key) kept.splice(i, 1);
+    }
+    row.source = null;
+    row.target = null;
+    row.targetInfo = null;
+    row.sourceInfo = null;
+  }
+  // Creator 3.8 需要单字段 override 排在数组项 override 之前。
+  const refs = kept.map(entry => entry.ref);
+  const isArrayItem = ref => (deref(elements, ref)?.propertyPath?.length ?? 0) > 1;
+  refs.sort((a, b) => Number(isArrayItem(a)) - Number(isArrayItem(b)));
+  hostInfo.targetOverrides = refs.length ? refs : null;
+}
+
+function execUnpackNestedPrefab(prefabData, op) {
+  const { elements, rootId } = prefabData;
+  const { node, nodeId } = resolveNode(prefabData, op.node, 'unpack-nested-prefab');
+  if (!isStub(elements, node) || !node._parent) fail('目标必须是有父节点的嵌套 Prefab');
+  const infoId = node._prefab.__id__;
+  const info = elements[infoId];
+  const instance = instanceAt(elements, nodeId);
+  for (const field of ['mountedChildren', 'removedComponents']) {
+    if (instance[field]?.length) fail(`暂不支持 ${field}`);
+  }
+  const hostInfo = findRootPrefabInfo(elements, rootId);
+  const source = parsePrefab(resolveUuidToPath(info.asset.__uuid__, prefabData.resolverStartPath));
+  if (!hostInfo || !findRootPrefabInfo(source.elements, source.rootId)) fail('暂不支持 Prefab 变体');
+
+  // 实例的作用域键是 PrefabInstance.fileId。多个实例可以带相同的模板根 fileId。
+  const scope = indexScope(source.elements, source.rootId);
+  const hostScope = indexScope(elements, rootId, nodeId);
+  const claimed = new Set(hostScope.keys());
+  function preserveId(fileId) {
+    if (!fileId) return;
+    if (claimed.has(fileId)) fail(`fileId 与宿主冲突: ${fileId}`);
+    claimed.add(fileId);
+  }
+  preserveId(info.fileId);
+  for (const [fileId, address] of scope) {
+    if (address.id !== source.rootId) preserveId(fileId);
+  }
+
+  const map = copyTemplate(elements, rootId, nodeId, infoId, source);
+  elements[nodeId]._parent = node._parent;
+  elements[infoId].fileId = info.fileId;
+  const inheritedRefs = elements[infoId].targetOverrides || [];
+  elements[infoId].targetOverrides = null;
+
+  function resolveAddress(ref) {
+    const chain = localId(elements, ref);
+    const address = scope.get(chain[0]);
+    if (!address || address.nested !== (chain.length > 1)) fail(`无法定位跨层引用: ${chain.join('/')}`);
+    return { id: map.get(address.id), chain: address.nested ? chain.slice(1) : undefined };
+  }
+
+  for (const ref of instance.mountedComponents || []) {
+    const mount = deref(elements, ref);
+    const address = resolveAddress(mount.targetInfo);
+    const targetNode = elements[address.id];
+    if (targetNode.__type__ !== 'cc.Node') fail('挂载组件的目标必须是节点');
+    if (address.chain) {
+      const inner = instanceAt(elements, address.id);
+      inner.mountedComponents ??= [];
+      inner.mountedComponents.push({
+        ...mount, targetInfo: { __type__: 'cc.TargetInfo', localID: address.chain },
+      });
+      continue;
+    }
+    for (const componentRef of mount.components || []) {
+      const component = deref(elements, componentRef);
+      if (!component?.__type__) fail('挂载组件不存在');
+      preserveId(deref(elements, component.__prefab)?.fileId);
+      component.node = { __id__: address.id };
+      targetNode._components.push(componentRef);
+    }
+  }
+
+  for (const ref of instance.propertyOverrides || []) {
+    const override = deref(elements, ref);
+    const address = resolveAddress(override.targetInfo);
+    const path = override.propertyPath;
+    validatePath(path);
+    if (['_children', '_components', '_prefab', '__prefab', '__type__', '_parent'].includes(path[0])) {
+      fail('不支持结构字段 override');
+    }
+    if (address.chain) appendPropertyOverride(elements, address, path, override.value);
+    else setField(elements[address.id], path, override.value);
+  }
+  rebindOverrides(elements, hostInfo, nodeId, resolveAddress, inheritedRefs);
+  instance.mountedComponents = [];
   instance.propertyOverrides = [];
   syncNestedRoots(elements, rootId);
   return nodeId;

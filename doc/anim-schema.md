@@ -74,7 +74,7 @@ CC3 编辑器按 schema 验证 .anim 文件，RealTrack / ObjectTrack 的通道�
 
 排查路径：打开 .anim 看节点 UIOpacity.opacity / spriteFrame 这类单值属性没显示时，第一件事是检查 `_channel` vs `_channels`。
 
-**正确写法请用 [cli/src/anim-primitives.js](../cli/src/anim-primitives.js) 的 `makeRealTrack` / `makeObjectTrack` / `makeVectorTrack` / `makeColorTrack` 工厂函数**，绑定了正确的字段名，编译期避免拼错。
+**正确写法请用 `cocos-mcp-gateway/runtime/cli/src/anim-primitives.js` 的 `makeRealTrack` / `makeObjectTrack` / `makeVectorTrack` / `makeColorTrack` 工厂函数**，绑定了正确的字段名，编译期避免拼错。
 
 ---
 
@@ -191,7 +191,7 @@ Alpha 通常 FGUI 自己会写 `time=0, value=0`，所以 opacity 轨道天然�
 最小示例：给 "n4" 节点 `cc.UIOpacity.opacity` 加一条 `[0→0, 0.1→255, 0.467→0]` 的 CONSTANT 轨道。
 
 ```js
-const { parsePrefab, writePrefab, anim, ref } = require('./cli/src');
+const { parsePrefab, writePrefab, anim, ref } = require('./runtime/cli/src');
 const {
   makeHierarchyPath, makeComponentPath, makeTrackPath,
   makeRealKeyframe, makeRealCurve, makeChannel, makeRealTrack,

@@ -13,12 +13,10 @@
 var fs = require('fs');
 var path = require('path');
 
-// 延迟 require，避免 bin.js 加载时 cli 路径不对
-// __dirname = router/src/，cli 相对路径为 ../../cli/src/index.js
-var CLI_INDEX = path.resolve(__dirname, '../../cli/src/index.js');
+var resolveCliRoot = require('../../cli/src/cli-root.js').resolveCliRoot;
 
 function getCli() {
-    return require(CLI_INDEX);
+    return require(path.join(resolveCliRoot(), 'src', 'index.js'));
 }
 
 // ── 工具：绝对路径校验 ──────────────────────────────────────────

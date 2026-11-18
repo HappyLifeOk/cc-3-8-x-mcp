@@ -329,17 +329,6 @@ function defineTools(ctx) {
                 return local.cleanDevDir();
             },
         },
-        {
-            name: 'meta_fix',
-            description: '清理 Cocos 重启造成的图片 meta 噪音（保守，只还原能确认是破坏的）：① 纯 key 顺序/格式变化还原 git 原文；② 九宫格 border 被重置成 0 精准还原；③ trimType 从 none 被改成自动裁剪还原该 frame 到 git。靠 git 对比、正确处理中文路径。dryRun=true 只预览不写。',
-            inputSchema: {
-                type: 'object',
-                properties: { dryRun: { type: 'boolean', description: 'true=只预览不写文件，列出将还原的 meta' } },
-            },
-            handler: async function (args) {
-                return local.fixMeta({ dryRun: !!(args && args.dryRun) });
-            },
-        },
     ];
 }
 

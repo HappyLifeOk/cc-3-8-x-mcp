@@ -1,7 +1,11 @@
 #!/usr/bin/env node
 'use strict';
 
-require('../src/index.js'); // 确保模块可正常加载
-const { main } = require('../src/cli/main.js');
+const path = require('path');
+const { resolveCliRoot } = require('../src/cli-root.js');
+
+const cli = resolveCliRoot();
+require(path.join(cli, 'src', 'index.js'));
+const { main } = require(path.join(cli, 'src', 'cli', 'main.js'));
 
 main(process.argv.slice(2));
